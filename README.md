@@ -1,5 +1,11 @@
 # A synchronous task runner for AWS Fargate on Amazon ECS
 
+[![pottava/ecs-task-runner](http://dockeri.co/image/pottava/ecs-task-runner)](https://hub.docker.com/r/pottava/ecs-task-runner/)
+
+Supported tags and respective `Dockerfile` links:  
+・latest ([Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/Dockerfile))  
+・1 ([Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/Dockerfile))  
+
 
 ## Description
 
