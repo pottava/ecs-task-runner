@@ -14,6 +14,7 @@ import (
 // for compile flags
 var (
 	version = "dev"
+	commit  string
 	date    string
 )
 
@@ -27,7 +28,7 @@ func main() {
 
 	app := cli.New("ecs-rask-runner", "A job runner for Amazon ECS")
 	if len(version) > 0 && len(date) > 0 {
-		app.Version(fmt.Sprintf("%s (built at %s)", version, date))
+		app.Version(fmt.Sprintf("%s-%s (built at %s)", version, commit, date))
 	} else {
 		app.Version(version)
 	}
@@ -55,9 +56,9 @@ func main() {
 	conf.Memory = run.Flag("memory", "Requested memory to run Fargate containers.").
 		Envar("MEMORY").Default("512").String()
 	conf.NumberOfTasks = run.Flag("number", "Number of tasks.").
-		Envar("NUMBER").Default("1").Int64()
+		Short('n').Envar("NUMBER").Default("1").Int64()
 	conf.TaskTimeout = run.Flag("timeout", "Timeout minutes for the task.").
-		Envar("TASK_TIMEOUT").Default("30").Int64()
+		Short('t').Envar("TASK_TIMEOUT").Default("30").Int64()
 
 	switch cli.MustParse(app.Parse(os.Args[1:])) {
 	case run.FullCommand():
