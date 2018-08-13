@@ -3,7 +3,7 @@
 
 ## Description
 
-This is a synchronous task runner for AWS Fargate. It runs a docker container on Fargate and wait for its done. Then it returns its standard output logs from CloudWatch logs. All resources we need are created temporary and remove them after the task finished.
+This is a synchronous task runner for AWS Fargate. It runs a docker container on Fargate and waits for its done. Then it returns its standard output logs from CloudWatch Logs. All resources we need are created temporarily and remove them after the task finished.
 
 
 ## Parameters
@@ -28,10 +28,7 @@ TASK_TIMEOUT              | timeout         | Timeout minutes for the task    | 
 With arguments:
 
 ```console
-$ ./ecs-task-runner \
-    -a AKIAIOSFODNN7EXAMPLE -s wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
-    run -c sample-cluster -i sample/image:test \
-    --subnets subnet-xxx --security_groups sg-yyy --security_groups sg-zzz
+$ ./ecs-task-runner -a AKIAIOSFODNN7EXAMPLE -s wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY run -c sample-cluster -i sample/image:test --subnets subnet-xxx --security_groups sg-yyy --security_groups sg-zzz
 {
   "container-1": [
     "2018-08-15T12:01:26+09:00: Hello world!",
@@ -48,4 +45,13 @@ $ export DOCKER_IMAGE
 $ export AWS_ACCESS_KEY_ID
 $ ..
 $ ./ecs-task-runner run
+```
+
+With docker container:
+
+```console
+$ export DOCKER_IMAGE
+$ export AWS_ACCESS_KEY_ID
+$ ..
+$ docker run --rm -e DOCKER_IMAGE -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION -e ECS_CLUSTER -e SUBNETS -e SECURITY_GROUPS pottava/ecs-task-runner run
 ```

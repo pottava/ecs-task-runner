@@ -93,7 +93,7 @@ func Run(conf Config) error {
 		for _, event := range value {
 			messages = append(messages, fmt.Sprintf(
 				"%s: %s",
-				time.Unix(aws.Int64Value(event.Timestamp), 0).Format(time.RFC3339),
+				time.Unix(aws.Int64Value(event.Timestamp)/1000, 0).Format(time.RFC3339),
 				aws.StringValue(event.Message),
 			))
 		}
