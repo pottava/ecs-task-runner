@@ -35,9 +35,9 @@ func main() {
 	// global flags
 	conf := commands.Config{}
 	conf.AwsAccessKey = app.Flag("access_key", "AWS access key ID.").
-		Short('a').Envar("AWS_ACCESS_KEY_ID").String()
+		Short('a').Envar("AWS_ACCESS_KEY_ID").Required().String()
 	conf.AwsSecretKey = app.Flag("secret_key", "AWS secret access key.").
-		Short('s').Envar("AWS_SECRET_ACCESS_KEY").String()
+		Short('s').Envar("AWS_SECRET_ACCESS_KEY").Required().String()
 	conf.AwsRegion = app.Flag("region", "AWS region.").
 		Short('r').Envar("AWS_DEFAULT_REGION").Default("us-east-1").String()
 
