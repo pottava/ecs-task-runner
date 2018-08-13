@@ -285,6 +285,18 @@ func registerTaskDef(ctx aws.Context, sess *session.Session, conf Config, id str
 }
 
 func run(ctx aws.Context, sess *session.Session, conf Config, taskARN *string, id string) ([]*ecs.Task, error) {
+	subnets := []*string{}
+	for _, arg := range conf.Subnets {
+		for _, subnet := range strings.Split(aws.StringValue(arg), ",") {
+			subnets = append(subnets, aws.String(subnet))
+		}
+	}
+	sgs := []*string{}
+	for _, arg := range conf.SecurityGroups {
+		for _, sg := range strings.Split(aws.StringValue(arg), ",") {
+			sgs = append(sgs, aws.String(sg))
+		}
+	}
 	out, err := ecs.New(sess).RunTaskWithContext(ctx, &ecs.RunTaskInput{
 		Cluster:        aws.String(conf.EcsCluster),
 		LaunchType:     aws.String(fargate),
@@ -293,8 +305,8 @@ func run(ctx aws.Context, sess *session.Session, conf Config, taskARN *string, i
 		NetworkConfiguration: &ecs.NetworkConfiguration{
 			AwsvpcConfiguration: &ecs.AwsVpcConfiguration{
 				AssignPublicIp: aws.String("ENABLED"),
-				Subnets:        conf.Subnets,
-				SecurityGroups: conf.SecurityGroups,
+				Subnets:        subnets,
+				SecurityGroups: sgs,
 			},
 		},
 	})
