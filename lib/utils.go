@@ -11,6 +11,6 @@ var Logger = native.New(os.Stdout, "", 0)
 
 // PrintJSON print JSON marshaled value
 func PrintJSON(records interface{}) {
-	marshaled, _ := json.MarshalIndent(records, "", "  ")
+	marshaled, _ := json.MarshalIndent(records, "", "  ") // nolint
 	Logger.Println(string(marshaled))
 }

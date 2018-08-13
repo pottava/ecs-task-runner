@@ -42,14 +42,14 @@ func Run(conf Config) error {
 	if os.Getenv("APP_DEBUG") == "1" {
 		lib.PrintJSON(conf)
 	}
-	// Check AWS credencials
+	// Check AWS credentials
 	sess, err := lib.Session(conf.AwsAccessKey, conf.AwsSecretKey, conf.AwsRegion, nil)
 	if err != nil {
 		return err
 	}
 	account, err := sts.New(sess).GetCallerIdentityWithContext(ctx, nil)
 	if err != nil {
-		return errors.New("Provided AWS credencials are invalid")
+		return errors.New("Provided AWS credentials are invalid")
 	}
 	if os.Getenv("APP_DEBUG") == "1" {
 		lib.PrintJSON(account)
@@ -161,11 +161,10 @@ func parseImageName(value string) (*string, *string, *string, error) {
 }
 
 const (
-	ecsExecutionPolicyName = "AmazonECSTaskExecutionRolePolicy"
-	ecsExecutionPolicyArn  = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-	fargate                = "FARGATE"
-	awsVPC                 = "awsvpc"
-	awsCWLogs              = "awslogs"
+	ecsExecutionPolicyArn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+	fargate               = "FARGATE"
+	awsVPC                = "awsvpc"
+	awsCWLogs             = "awslogs"
 )
 
 func createResouces(ctx aws.Context, sess *session.Session, conf Config, id string, image *string) (*string, *string, error) {
