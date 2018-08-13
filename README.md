@@ -1,5 +1,7 @@
 # A synchronous task runner for AWS Fargate on Amazon ECS
 
+[![CircleCI](https://circleci.com/gh/pottava/ecs-task-runner.svg?style=svg)](https://circleci.com/gh/pottava/ecs-task-runner)
+
 [![pottava/ecs-task-runner](http://dockeri.co/image/pottava/ecs-task-runner)](https://hub.docker.com/r/pottava/ecs-task-runner/)
 
 Supported tags and respective `Dockerfile` links:  
@@ -44,7 +46,7 @@ NUMBER                    | number          | Number of tasks                 | 
 TASK_TIMEOUT              | timeout         | Timeout minutes for the task    |          | 30
 
 
-## Sample
+## Samples
 
 With arguments:
 
