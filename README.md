@@ -37,9 +37,9 @@ DOCKER_IMAGE              | image           | Docker image to be run on ECS   | 
 AWS_ACCESS_KEY_ID         | access_key      | AWS `access key` for API access | *        |
 AWS_SECRET_ACCESS_KEY     | secret_key      | AWS `secret key` for API access | *        |
 AWS_DEFAULT_REGION        | region          | AWS `region` for API access     |          | us-east-1
-ECS_CLUSTER               | cluster         | Amazon ECS cluster name         |          | default
-SUBNETS                   | subnets         | Fargate's Subnets               | *        |
-SECURITY_GROUPS           | security_groups | Fargate's SecurityGroups        | *        |
+ECS_CLUSTER               | cluster         | Amazon ECS cluster name         |          | 
+SUBNETS                   | subnets         | Fargate's Subnets               |          |
+SECURITY_GROUPS           | security_groups | Fargate's SecurityGroups        |          |
 CPU                       | cpu             | Requested vCPU to run Fargate   |          | 256
 MEMORY                    | memory          | Requested memory to run Fargate |          | 512
 NUMBER                    | number          | Number of tasks                 |          | 1 
@@ -51,7 +51,7 @@ TASK_TIMEOUT              | timeout         | Timeout minutes for the task    | 
 With arguments:
 
 ```console
-$ ecs-task-runner -a AKIAIOSFODNN7EXAMPLE -s wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY run -c sample-cluster -i sample/image:test --subnets subnet-xxx --security_groups sg-yyy --security_groups sg-zzz
+$ ecs-task-runner -a AKIAIOSFODNN7EXAMPLE -s wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY run -i sample/image
 {
   "container-1": [
     "2018-08-15T12:01:26+09:00: Hello world!",
@@ -64,17 +64,17 @@ $ ecs-task-runner -a AKIAIOSFODNN7EXAMPLE -s wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMP
 With environment variables:
 
 ```console
-$ export DOCKER_IMAGE
-$ export AWS_ACCESS_KEY_ID
-$ ..
+$ export DOCKER_IMAGE=sample/image
+$ export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+$ export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 $ ecs-task-runner run
 ```
 
 With docker container:
 
 ```console
-$ export DOCKER_IMAGE
-$ export AWS_ACCESS_KEY_ID
-$ ..
-$ docker run --rm -e DOCKER_IMAGE -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION -e ECS_CLUSTER -e SUBNETS -e SECURITY_GROUPS pottava/ecs-task-runner:1 run
+$ export DOCKER_IMAGE=sample/image
+$ export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+$ export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+$ docker run --rm -e DOCKER_IMAGE -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY pottava/ecs-task-runner:1 run
 ```

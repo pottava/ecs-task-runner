@@ -21,7 +21,7 @@
   revision = "2efee857e7cfd4f3d0138cc3cbb1b4966962b93a"
 
 [[projects]]
-  digest = "1:28757bdfbe8a1c2b4a17f7c0bea3fb60e9071c3718f188365e5fc32be9ec620a"
+  digest = "1:6ad09147a65e6ef478c4570964656ad18419998411da6ac4746572c4cfeefbaf"
   name = "github.com/aws/aws-sdk-go"
   packages = [
     "aws",
@@ -46,6 +46,7 @@
     "internal/sdkuri",
     "internal/shareddefaults",
     "private/protocol",
+    "private/protocol/ec2query",
     "private/protocol/json/jsonutil",
     "private/protocol/jsonrpc",
     "private/protocol/query",
@@ -53,6 +54,7 @@
     "private/protocol/rest",
     "private/protocol/xml/xmlutil",
     "service/cloudwatchlogs",
+    "service/ec2",
     "service/ecr",
     "service/ecs",
     "service/iam",
@@ -135,6 +137,7 @@
     "github.com/aws/aws-sdk-go/aws",
     "github.com/aws/aws-sdk-go/aws/session",
     "github.com/aws/aws-sdk-go/service/cloudwatchlogs",
+    "github.com/aws/aws-sdk-go/service/ec2",
     "github.com/aws/aws-sdk-go/service/ecr",
     "github.com/aws/aws-sdk-go/service/ecs",
     "github.com/aws/aws-sdk-go/service/iam",

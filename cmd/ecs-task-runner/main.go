@@ -26,14 +26,14 @@ func main() {
 		}
 	}()
 
-	app := cli.New("ecs-rask-runner", "A job runner for Amazon ECS")
+	app := cli.New("ecs-rask-runner", "A synchronous task runner AWS Fargate on Amazon ECS")
 	if len(version) > 0 && len(date) > 0 {
 		app.Version(fmt.Sprintf("%s-%s (built at %s)", version, commit, date))
 	} else {
 		app.Version(version)
 	}
 	// global flags
-	conf := commands.Config{}
+	conf := &commands.Config{}
 	conf.AwsAccessKey = app.Flag("access_key", "AWS access key ID.").
 		Short('a').Envar("AWS_ACCESS_KEY_ID").Required().String()
 	conf.AwsSecretKey = app.Flag("secret_key", "AWS secret access key.").
@@ -43,14 +43,14 @@ func main() {
 
 	// commands
 	run := app.Command("run", "Run a docker image as a Fargate on ECS cluster.")
-	ecsCluster := run.Flag("cluster", "Amazon ECS cluster name.").
-		Short('c').Envar("ECS_CLUSTER").Default("default").String()
+	conf.EcsCluster = run.Flag("cluster", "Amazon ECS cluster name.").
+		Short('c').Envar("ECS_CLUSTER").String()
 	image := run.Flag("image", "Docker image name to be executed on ECS.").
 		Short('i').Envar("DOCKER_IMAGE").Required().String()
 	subnets := run.Flag("subnets", "Subnets on where Fargate containers run.").
-		Envar("SUBNETS").Required().Strings()
+		Envar("SUBNETS").Strings()
 	securityGroups := run.Flag("security_groups", "SecurityGroups to be assigned to containers.").
-		Envar("SECURITY_GROUPS").Required().Strings()
+		Envar("SECURITY_GROUPS").Strings()
 	conf.CPU = run.Flag("cpu", "Requested vCPU to run Fargate containers.").
 		Envar("CPU").Default("256").String()
 	conf.Memory = run.Flag("memory", "Requested memory to run Fargate containers.").
@@ -62,7 +62,6 @@ func main() {
 
 	switch cli.MustParse(app.Parse(os.Args[1:])) {
 	case run.FullCommand():
-		conf.EcsCluster = aws.StringValue(ecsCluster)
 		conf.Image = aws.StringValue(image)
 		conf.Subnets = []*string{}
 		if subnets != nil {

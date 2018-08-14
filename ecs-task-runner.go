@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	cw "github.com/aws/aws-sdk-go/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/aws/aws-sdk-go/service/iam"
@@ -26,7 +27,7 @@ type Config struct {
 	AwsAccessKey   *string
 	AwsSecretKey   *string
 	AwsRegion      *string
-	EcsCluster     string
+	EcsCluster     *string
 	Image          string
 	Subnets        []*string
 	SecurityGroups []*string
@@ -37,7 +38,7 @@ type Config struct {
 }
 
 // Run runs the docker image on Amazon ECS
-func Run(conf Config) error {
+func Run(conf *Config) error {
 	ctx := aws.BackgroundContext()
 	if os.Getenv("APP_DEBUG") == "1" {
 		lib.PrintJSON(conf)
@@ -62,6 +63,10 @@ func Run(conf Config) error {
 	// Generate UUID
 	id := fmt.Sprintf("ecs-task-runner-%s", uuid.New().String())
 
+	// Ensure resource existence
+	if err = ensureAWSResources(ctx, sess, conf, id); err != nil {
+		return err
+	}
 	// Create AWS resources
 	taskARN, _, err := createResouces(ctx, sess, conf, id, image)
 	if err != nil {
@@ -104,7 +109,7 @@ func Run(conf Config) error {
 	return nil
 }
 
-func validateImageName(conf Config, sess *session.Session, account string) (*string, error) {
+func validateImageName(conf *Config, sess *session.Session, account string) (*string, error) {
 	imageHost, imageName, imageTag, err := parseImageName(conf.Image)
 	if err != nil {
 		log.New(os.Stderr, "", 0).Println("Provided image name is invalid.")
@@ -143,6 +148,121 @@ func validateImageName(conf Config, sess *session.Session, account string) (*str
 	)), nil
 }
 
+func ensureAWSResources(ctx aws.Context, sess *session.Session, conf *Config, id string) error {
+
+	// Ensure cluster existence
+	if conf.EcsCluster == nil || aws.StringValue(conf.EcsCluster) == "" {
+		conf.EcsCluster = aws.String(id)
+	}
+	if err := createClusterIfNotExist(ctx, sess, conf.EcsCluster); err != nil {
+		return nil
+	}
+	vpc := findDefaultVPC(ctx, sess)
+
+	// Ensure subnets existence
+	subnets := []*string{}
+	if conf.Subnets == nil || len(conf.Subnets) == 0 {
+		defSubnet := findDefaultSubnet(ctx, sess, vpc)
+		if defSubnet == nil {
+			return errors.New("There is no default subnet")
+		}
+		subnets = append(subnets, defSubnet)
+	} else {
+		for _, arg := range conf.Subnets {
+			for _, subnet := range strings.Split(aws.StringValue(arg), ",") {
+				subnets = append(subnets, aws.String(subnet))
+			}
+		}
+	}
+	conf.Subnets = subnets
+
+	// Ensure security-group existence
+	sgs := []*string{}
+	if conf.SecurityGroups == nil || len(conf.SecurityGroups) == 0 {
+		defSecurityGroup := findDefaultSg(ctx, sess, vpc)
+		if defSecurityGroup == nil {
+			return errors.New("There is no default security group")
+		}
+		sgs = append(sgs, defSecurityGroup)
+	} else {
+		for _, arg := range conf.SecurityGroups {
+			for _, sg := range strings.Split(aws.StringValue(arg), ",") {
+				sgs = append(sgs, aws.String(sg))
+			}
+		}
+	}
+	conf.SecurityGroups = sgs
+	return nil
+}
+
+func createClusterIfNotExist(ctx aws.Context, sess *session.Session, cluster *string) error {
+	out, err := ecs.New(sess).DescribeClustersWithContext(ctx, &ecs.DescribeClustersInput{
+		Clusters: []*string{cluster},
+	})
+	if err != nil {
+		return err
+	}
+	if len(out.Clusters) == 0 {
+		_, err = ecs.New(sess).CreateClusterWithContext(ctx, &ecs.CreateClusterInput{
+			ClusterName: cluster,
+		})
+	}
+	return err
+}
+
+func findDefaultVPC(ctx aws.Context, sess *session.Session) *string {
+	out, err := ec2.New(sess).DescribeVpcsWithContext(ctx, &ec2.DescribeVpcsInput{
+		Filters: []*ec2.Filter{
+			&ec2.Filter{
+				Name:   aws.String("isDefault"),
+				Values: []*string{aws.String("true")},
+			},
+		},
+	})
+	if err != nil || len(out.Vpcs) == 0 {
+		return nil
+	}
+	return out.Vpcs[0].VpcId
+}
+
+func findDefaultSubnet(ctx aws.Context, sess *session.Session, vpc *string) *string {
+	out, err := ec2.New(sess).DescribeSubnetsWithContext(ctx, &ec2.DescribeSubnetsInput{
+		Filters: []*ec2.Filter{
+			&ec2.Filter{
+				Name:   aws.String("vpc-id"),
+				Values: []*string{vpc},
+			},
+			&ec2.Filter{
+				Name:   aws.String("default-for-az"),
+				Values: []*string{aws.String("true")},
+			},
+		},
+	})
+	if err != nil || len(out.Subnets) == 0 {
+		return nil
+	}
+	return out.Subnets[0].SubnetId
+}
+
+func findDefaultSg(ctx aws.Context, sess *session.Session, vpc *string) *string {
+	out, err := ec2.New(sess).DescribeSecurityGroupsWithContext(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: []*ec2.Filter{
+			&ec2.Filter{
+				Name:   aws.String("vpc-id"),
+				Values: []*string{vpc},
+			},
+			&ec2.Filter{
+				Name:   aws.String("group-name"),
+				Values: []*string{aws.String("default")},
+			},
+		},
+	})
+	if err != nil || len(out.SecurityGroups) == 0 {
+		return nil
+	}
+	return out.SecurityGroups[0].GroupId
+}
+
 func parseImageName(value string) (*string, *string, *string, error) {
 	ref, err := reference.Parse(value)
 	if err != nil {
@@ -167,7 +287,7 @@ const (
 	awsCWLogs             = "awslogs"
 )
 
-func createResouces(ctx aws.Context, sess *session.Session, conf Config, id string, image *string) (*string, *string, error) {
+func createResouces(ctx aws.Context, sess *session.Session, conf *Config, id string, image *string) (*string, *string, error) {
 	// Make a temporary log group
 	if err := createLogGroup(ctx, sess, conf, id); err != nil {
 		log.New(os.Stderr, "", 0).Println("Error at create#createLogGroup")
@@ -188,14 +308,14 @@ func createResouces(ctx aws.Context, sess *session.Session, conf Config, id stri
 	return taskARN, roleARN, nil
 }
 
-func createLogGroup(ctx aws.Context, sess *session.Session, conf Config, id string) error {
+func createLogGroup(ctx aws.Context, sess *session.Session, conf *Config, id string) error {
 	_, err := cw.New(sess).CreateLogGroupWithContext(ctx, &cw.CreateLogGroupInput{
 		LogGroupName: aws.String(fmt.Sprintf("/ecs/%s", id)),
 	})
 	return err
 }
 
-func createIAMRole(ctx aws.Context, sess *session.Session, conf Config, id string) (*string, error) {
+func createIAMRole(ctx aws.Context, sess *session.Session, conf *Config, id string) (*string, error) {
 	out, err := iam.New(sess).CreateRoleWithContext(ctx, &iam.CreateRoleInput{
 		RoleName: aws.String(id),
 		AssumeRolePolicyDocument: aws.String(`{
@@ -250,7 +370,7 @@ func waitForPolicyActive(ctx aws.Context, sess *session.Session, id string) erro
 	}
 }
 
-func registerTaskDef(ctx aws.Context, sess *session.Session, conf Config, id string, image *string, role string) (*string, error) {
+func registerTaskDef(ctx aws.Context, sess *session.Session, conf *Config, id string, image *string, role string) (*string, error) {
 	input := ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String(id),
 		RequiresCompatibilities: []*string{aws.String(fargate)},
@@ -284,39 +404,31 @@ func registerTaskDef(ctx aws.Context, sess *session.Session, conf Config, id str
 	return out.TaskDefinition.TaskDefinitionArn, nil
 }
 
-func run(ctx aws.Context, sess *session.Session, conf Config, taskARN *string, id string) ([]*ecs.Task, error) {
-	subnets := []*string{}
-	for _, arg := range conf.Subnets {
-		for _, subnet := range strings.Split(aws.StringValue(arg), ",") {
-			subnets = append(subnets, aws.String(subnet))
-		}
-	}
-	sgs := []*string{}
-	for _, arg := range conf.SecurityGroups {
-		for _, sg := range strings.Split(aws.StringValue(arg), ",") {
-			sgs = append(sgs, aws.String(sg))
-		}
-	}
-	out, err := ecs.New(sess).RunTaskWithContext(ctx, &ecs.RunTaskInput{
-		Cluster:        aws.String(conf.EcsCluster),
+func run(ctx aws.Context, sess *session.Session, conf *Config, taskARN *string, id string) ([]*ecs.Task, error) {
+	input := ecs.RunTaskInput{
+		Cluster:        conf.EcsCluster,
 		LaunchType:     aws.String(fargate),
 		TaskDefinition: taskARN,
 		Count:          conf.NumberOfTasks,
 		NetworkConfiguration: &ecs.NetworkConfiguration{
 			AwsvpcConfiguration: &ecs.AwsVpcConfiguration{
 				AssignPublicIp: aws.String("ENABLED"),
-				Subnets:        subnets,
-				SecurityGroups: sgs,
+				Subnets:        conf.Subnets,
+				SecurityGroups: conf.SecurityGroups,
 			},
 		},
-	})
+	}
+	if os.Getenv("APP_DEBUG") == "1" {
+		lib.PrintJSON(input)
+	}
+	out, err := ecs.New(sess).RunTaskWithContext(ctx, &input)
 	if err != nil {
 		return nil, err
 	}
 	return out.Tasks, nil
 }
 
-func waitForTaskDone(ctx aws.Context, sess *session.Session, conf Config, tasks []*ecs.Task) error {
+func waitForTaskDone(ctx aws.Context, sess *session.Session, conf *Config, tasks []*ecs.Task) error {
 	timeout := time.After(time.Duration(aws.Int64Value(conf.TaskTimeout)) * time.Minute)
 	taskARNs := []*string{}
 	for _, task := range tasks {
@@ -328,7 +440,7 @@ func waitForTaskDone(ctx aws.Context, sess *session.Session, conf Config, tasks 
 			return fmt.Errorf("The task did not finish in %d minutes", aws.Int64Value(conf.TaskTimeout))
 		default:
 			tasks, err := ecs.New(sess).DescribeTasksWithContext(ctx, &ecs.DescribeTasksInput{
-				Cluster: aws.String(conf.EcsCluster),
+				Cluster: conf.EcsCluster,
 				Tasks:   taskARNs,
 			})
 			if err != nil {
@@ -383,6 +495,9 @@ func deleteResouces(ctx aws.Context, sess *session.Session, id string, task *str
 
 	// Delete the temporary log group
 	deleteLogGroup(ctx, sess, id)
+
+	// Delete the temporary ECS cluster
+	deleteECSCluster(ctx, sess, id)
 }
 
 func deregisterTaskDef(ctx aws.Context, sess *session.Session, taskARN *string) error {
@@ -406,6 +521,13 @@ func deleteIAMRole(ctx aws.Context, sess *session.Session, id string) error {
 func deleteLogGroup(ctx aws.Context, sess *session.Session, id string) error {
 	_, err := cw.New(sess).DeleteLogGroupWithContext(ctx, &cw.DeleteLogGroupInput{
 		LogGroupName: aws.String(fmt.Sprintf("/ecs/%s", id)),
+	})
+	return err
+}
+
+func deleteECSCluster(ctx aws.Context, sess *session.Session, id string) error {
+	_, err := ecs.New(sess).DeleteClusterWithContext(ctx, &ecs.DeleteClusterInput{
+		Cluster: aws.String(id),
 	})
 	return err
 }
