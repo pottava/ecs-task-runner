@@ -13,6 +13,6 @@
     "gosimple"
   ],
   "Vendor": true,
-  "Deadline": "60s",
+  "Deadline": "120s",
   "Aggregate": true
 }
