@@ -29,10 +29,15 @@ type Config struct {
 	AwsRegion      *string
 	EcsCluster     *string
 	Image          string
+	Entrypoint     []*string
+	Commands       []*string
+	Environments   map[string]*string
+	Labels         map[string]*string
 	Subnets        []*string
 	SecurityGroups []*string
 	CPU            *string
 	Memory         *string
+	TaskRoleArn    *string
 	NumberOfTasks  *int64
 	TaskTimeout    *int64
 }
@@ -371,18 +376,46 @@ func waitForPolicyActive(ctx aws.Context, sess *session.Session, id string) erro
 }
 
 func registerTaskDef(ctx aws.Context, sess *session.Session, conf *Config, id string, image *string, role string) (*string, error) {
+	entrypoint := []*string{}
+	if conf.Entrypoint != nil && len(conf.Entrypoint) > 0 {
+		for _, cmds := range conf.Entrypoint {
+			for _, cmd := range strings.Split(aws.StringValue(cmds), ",") {
+				entrypoint = append(entrypoint, aws.String(cmd))
+			}
+		}
+	}
+	command := []*string{}
+	if conf.Commands != nil && len(conf.Commands) > 0 {
+		for _, cmds := range conf.Commands {
+			for _, cmd := range strings.Split(aws.StringValue(cmds), ",") {
+				command = append(command, aws.String(cmd))
+			}
+		}
+	}
+	environments := []*ecs.KeyValuePair{}
+	for key, val := range conf.Environments {
+		environments = append(environments, &ecs.KeyValuePair{
+			Name:  aws.String(key),
+			Value: val,
+		})
+	}
 	input := ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String(id),
 		RequiresCompatibilities: []*string{aws.String(fargate)},
 		ExecutionRoleArn:        aws.String(role),
+		TaskRoleArn:             conf.TaskRoleArn,
 		Cpu:                     conf.CPU,
 		Memory:                  conf.Memory,
 		NetworkMode:             aws.String(awsVPC),
 		ContainerDefinitions: []*ecs.ContainerDefinition{
 			&ecs.ContainerDefinition{
-				Name:      aws.String("app"),
-				Image:     image,
-				Essential: aws.Bool(true),
+				Name:         aws.String("app"),
+				Image:        image,
+				EntryPoint:   entrypoint,
+				Command:      command,
+				Environment:  environments,
+				DockerLabels: conf.Labels,
+				Essential:    aws.Bool(true),
 				LogConfiguration: &ecs.LogConfiguration{
 					LogDriver: aws.String(awsCWLogs),
 					Options: map[string]*string{

@@ -47,6 +47,10 @@ func main() {
 		Short('c').Envar("ECS_CLUSTER").String()
 	image := run.Flag("image", "Docker image name to be executed on ECS.").
 		Short('i').Envar("DOCKER_IMAGE").Required().String()
+	entrypoints := run.Flag("entrypoint", "Override `ENTRYPOINT` of the image.").
+		Envar("ENTRYPOINT").Strings()
+	cmds := run.Flag("command", "Override `CMD` of the image.").
+		Envar("COMMAND").Strings()
 	subnets := run.Flag("subnets", "Subnets on where Fargate containers run.").
 		Envar("SUBNETS").Strings()
 	securityGroups := run.Flag("security_groups", "SecurityGroups to be assigned to containers.").
@@ -55,6 +59,8 @@ func main() {
 		Envar("CPU").Default("256").String()
 	conf.Memory = run.Flag("memory", "Requested memory to run Fargate containers.").
 		Envar("MEMORY").Default("512").String()
+	conf.TaskRoleArn = run.Flag("role", "ARN of an IAM Role for the task.").
+		Envar("TASK_ROLE").String()
 	conf.NumberOfTasks = run.Flag("number", "Number of tasks.").
 		Short('n').Envar("NUMBER").Default("1").Int64()
 	conf.TaskTimeout = run.Flag("timeout", "Timeout minutes for the task.").
@@ -63,6 +69,18 @@ func main() {
 	switch cli.MustParse(app.Parse(os.Args[1:])) {
 	case run.FullCommand():
 		conf.Image = aws.StringValue(image)
+		conf.Entrypoint = []*string{}
+		if entrypoints != nil {
+			for _, entrypoint := range *entrypoints {
+				conf.Entrypoint = append(conf.Entrypoint, aws.String(entrypoint))
+			}
+		}
+		conf.Commands = []*string{}
+		if cmds != nil {
+			for _, cmd := range *cmds {
+				conf.Commands = append(conf.Commands, aws.String(cmd))
+			}
+		}
 		conf.Subnets = []*string{}
 		if subnets != nil {
 			for _, subnet := range *subnets {

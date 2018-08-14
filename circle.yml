@@ -1,16 +1,11 @@
 version: 2
 jobs:
-  build:
+  test:
     working_directory: /go/src/github.com/pottava/ecs-task-runner
     docker:
       - image: circleci/golang:1.10.3
     steps:
       - checkout
-      - setup_remote_docker
-      - save_cache:
-          key: pkg-cache
-          paths:
-            - "/go/pkg"
       - run: go get -u github.com/golang/dep/...
       - run: dep ensure
       - run: go get -u gopkg.in/alecthomas/gometalinter.v2
@@ -20,30 +15,34 @@ jobs:
             gometalinter.v2 --install
             gometalinter.v2 --config=lint-config.json ./...
             go test -cover -bench -benchmem `go list ./...`
-  release:
+  build:
     working_directory: /go/src/github.com/pottava/ecs-task-runner
     docker:
       - image: circleci/golang:1.10.3
     steps:
+      - checkout
+      - run: go get -u github.com/golang/dep/...
+      - run: dep ensure
       - run: go get github.com/mitchellh/gox
       - run: go get github.com/tcnksm/ghr
       - run:
           name: Build and release
           command: |
+            cd cmd/ecs-task-runner/
             gox --osarch "linux/amd64 darwin/amd64 windows/amd64" -ldflags "-s -w -X main.date=$(date +%Y-%m-%d --utc) -X main.version=${CIRCLE_TAG} -X main.commit=${CIRCLE_SHA1}" -output "${GOPATH}/pkg/${CIRCLE_PROJECT_REPONAME}_{{.OS}}_{{.Arch}}"
-            ghr -t $GITHUB_TOKEN -u $CIRCLE_PROJECT_USERNAME -r $CIRCLE_PROJECT_REPONAME --replace `git describe --tags` $GOPATH/pkg/
+            ghr -t $GITHUB_TOKEN -u $CIRCLE_PROJECT_USERNAME -r $CIRCLE_PROJECT_REPONAME --replace ${CIRCLE_TAG} $GOPATH/pkg/
 
 workflows:
   version: 2
-  build:
+  dev:
     jobs:
-      - build:
+      - test:
           filters:
             branches:
               only: /.*/
   release:
     jobs:
-      - deploy:
+      - build:
           filters:
             branches:
               ignore: /.*/

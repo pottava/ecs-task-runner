@@ -16,6 +16,12 @@ This is a synchronous task runner for AWS Fargate. It runs a docker container on
 
 ## Installation
 
+curl:
+
+```
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/1.1/ecs-task-runner_darwin_amd64 && chmod +x ecs-task-runner
+```
+
 go:
 
 ```
@@ -34,12 +40,15 @@ $ docker pull pottava/ecs-task-runner:1
 Environment Variables     | Argument        | Description                     | Required | Default 
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
 DOCKER_IMAGE              | image           | Docker image to be run on ECS   | *        |
+ENTRYPOINT                | entrypoint      | Override `ENTRYPOINT` of the image |       |
+COMMAND                   | command         | Override `CMD` of the image     |          |
 AWS_ACCESS_KEY_ID         | access_key      | AWS `access key` for API access | *        |
 AWS_SECRET_ACCESS_KEY     | secret_key      | AWS `secret key` for API access | *        |
 AWS_DEFAULT_REGION        | region          | AWS `region` for API access     |          | us-east-1
 ECS_CLUSTER               | cluster         | Amazon ECS cluster name         |          | 
 SUBNETS                   | subnets         | Fargate's Subnets               |          |
 SECURITY_GROUPS           | security_groups | Fargate's SecurityGroups        |          |
+TASK_ROLE                 | role            | ARN of an IAM Role for the task |          |
 CPU                       | cpu             | Requested vCPU to run Fargate   |          | 256
 MEMORY                    | memory          | Requested memory to run Fargate |          | 512
 NUMBER                    | number          | Number of tasks                 |          | 1 

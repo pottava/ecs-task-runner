@@ -1,7 +1,7 @@
 FROM alpine:3.8
 
 ENV DEP_VERSION=v0.5.0 \
-    VERSION=1.0 \
+    VERSION=1.1 \
     AWS_REGION=us-east-1
 
 RUN apk add --no-cache ca-certificates
@@ -26,7 +26,7 @@ RUN apk --no-cache add --virtual build-deps gcc musl-dev go git \
     && mv ecs-task-runner /usr/bin/ \
     && apk del --purge -r build-deps \
     && cd / \
-    && rm -rf /go
+    && rm -rf /go /root/.cache
 
 ENTRYPOINT ["ecs-task-runner"]
 CMD ["--help"]
