@@ -1,10 +1,9 @@
 package etr
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"log"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -43,12 +42,19 @@ type Config struct {
 	TaskRoleArn    *string
 	NumberOfTasks  *int64
 	TaskTimeout    *int64
+	IsDebugMode    bool
 }
 
+var (
+	resourceID string
+	taskARN    *string
+)
+
 // Run runs the docker image on Amazon ECS
-func Run(conf *Config) (exitCode *int64, err error) {
-	ctx := aws.BackgroundContext()
-	if os.Getenv("APP_DEBUG") == "1" {
+func Run(ctx context.Context, conf *Config) (exitCode *int64, err error) {
+	resourceID = fmt.Sprintf("ecs-task-runner-%s", uuid.New().String())
+
+	if conf.IsDebugMode {
 		lib.PrintJSON(conf)
 	}
 	// Check AWS credentials
@@ -60,44 +66,41 @@ func Run(conf *Config) (exitCode *int64, err error) {
 	if err != nil {
 		return nil, errors.New("Provided AWS credentials are invalid")
 	}
-	if os.Getenv("APP_DEBUG") == "1" {
+	if conf.IsDebugMode {
 		lib.PrintJSON(account)
 	}
 	// Check existence of the image on ECR
-	image, err := validateImageName(conf, sess, aws.StringValue(account.Account))
+	image, err := validateImageName(ctx, conf, sess, aws.StringValue(account.Account))
 	if err != nil {
 		return nil, err
 	}
-	// Generate UUID
-	id := fmt.Sprintf("ecs-task-runner-%s", uuid.New().String())
-
 	// Ensure resource existence
-	if err = ensureAWSResources(ctx, sess, conf, id); err != nil {
+	if err = ensureAWSResources(ctx, sess, conf, resourceID); err != nil {
 		return nil, err
 	}
 	// Create AWS resources
-	taskARN, _, err := createResouces(ctx, sess, conf, id, image)
+	taskARN, _, err = createResouces(ctx, sess, conf, resourceID, image)
 	if err != nil {
-		deleteResouces(ctx, sess, id, taskARN)
+		DeleteResouces(conf)
 		return nil, err
 	}
 	// Run the ECS task
-	tasks, err := run(ctx, sess, conf, taskARN, id)
+	tasks, err := run(ctx, sess, conf, taskARN, resourceID)
 	if err != nil {
-		deleteResouces(ctx, sess, id, taskARN)
+		DeleteResouces(conf)
 		return nil, err
 	}
 	// Wait for its done
 	exitCode, err = waitForTaskDone(ctx, sess, conf, tasks)
 	if err != nil {
-		deleteResouces(ctx, sess, id, taskARN)
+		DeleteResouces(conf)
 		return nil, err
 	}
 	// Retrieve app log
-	logs := retrieveLogs(ctx, sess, id, tasks)
+	logs := retrieveLogs(ctx, sess, resourceID, tasks)
 
 	// Delete AWS resources
-	deleteResouces(ctx, sess, id, taskARN)
+	DeleteResouces(conf)
 
 	// Format the result
 	result := map[string][]string{}
@@ -118,10 +121,10 @@ func Run(conf *Config) (exitCode *int64, err error) {
 	return exitCode, nil
 }
 
-func validateImageName(conf *Config, sess *session.Session, account string) (*string, error) {
+func validateImageName(ctx context.Context, conf *Config, sess *session.Session, account string) (*string, error) {
 	imageHost, imageName, imageTag, err := parseImageName(conf.Image)
 	if err != nil {
-		log.New(os.Stderr, "", 0).Println("Provided image name is invalid.")
+		lib.Errors.Println("Provided image name is invalid.")
 		return nil, err
 	}
 	// Try to make up ECR image name
@@ -138,7 +141,7 @@ func validateImageName(conf *Config, sess *session.Session, account string) (*st
 		))
 	}
 	if strings.Contains(aws.StringValue(imageHost), "amazonaws.com") {
-		if _, err := ecr.New(sess).DescribeRepositories(&ecr.DescribeRepositoriesInput{
+		if _, err := ecr.New(sess).DescribeRepositoriesWithContext(ctx, &ecr.DescribeRepositoriesInput{
 			RepositoryNames: []*string{imageName},
 		}); err != nil {
 			return nil, err
@@ -176,7 +179,7 @@ func parseImageName(value string) (*string, *string, *string, error) {
 	return aws.String(imageHost), aws.String(imageName), aws.String(imageTag), nil
 }
 
-func ensureAWSResources(ctx aws.Context, sess *session.Session, conf *Config, id string) error {
+func ensureAWSResources(ctx context.Context, sess *session.Session, conf *Config, id string) error {
 
 	// Ensure cluster existence
 	if conf.EcsCluster == nil || aws.StringValue(conf.EcsCluster) == "" {
@@ -223,7 +226,7 @@ func ensureAWSResources(ctx aws.Context, sess *session.Session, conf *Config, id
 	return nil
 }
 
-func createClusterIfNotExist(ctx aws.Context, sess *session.Session, cluster *string) error {
+func createClusterIfNotExist(ctx context.Context, sess *session.Session, cluster *string) error {
 	out, err := ecs.New(sess).DescribeClustersWithContext(ctx, &ecs.DescribeClustersInput{
 		Clusters: []*string{cluster},
 	})
@@ -238,7 +241,7 @@ func createClusterIfNotExist(ctx aws.Context, sess *session.Session, cluster *st
 	return err
 }
 
-func findDefaultVPC(ctx aws.Context, sess *session.Session) *string {
+func findDefaultVPC(ctx context.Context, sess *session.Session) *string {
 	out, err := ec2.New(sess).DescribeVpcsWithContext(ctx, &ec2.DescribeVpcsInput{
 		Filters: []*ec2.Filter{
 			&ec2.Filter{
@@ -253,7 +256,7 @@ func findDefaultVPC(ctx aws.Context, sess *session.Session) *string {
 	return out.Vpcs[0].VpcId
 }
 
-func findDefaultSubnet(ctx aws.Context, sess *session.Session, vpc *string) *string {
+func findDefaultSubnet(ctx context.Context, sess *session.Session, vpc *string) *string {
 	out, err := ec2.New(sess).DescribeSubnetsWithContext(ctx, &ec2.DescribeSubnetsInput{
 		Filters: []*ec2.Filter{
 			&ec2.Filter{
@@ -272,7 +275,7 @@ func findDefaultSubnet(ctx aws.Context, sess *session.Session, vpc *string) *str
 	return out.Subnets[0].SubnetId
 }
 
-func findDefaultSg(ctx aws.Context, sess *session.Session, vpc *string) *string {
+func findDefaultSg(ctx context.Context, sess *session.Session, vpc *string) *string {
 	out, err := ec2.New(sess).DescribeSecurityGroupsWithContext(ctx, &ec2.DescribeSecurityGroupsInput{
 		Filters: []*ec2.Filter{
 			&ec2.Filter{
@@ -298,35 +301,32 @@ const (
 	awsCWLogs             = "awslogs"
 )
 
-func createResouces(ctx aws.Context, sess *session.Session, conf *Config, id string, image *string) (*string, *string, error) {
+func createResouces(ctx context.Context, sess *session.Session, conf *Config, id string, image *string) (*string, *string, error) {
 	// Make a temporary log group
 	if err := createLogGroup(ctx, sess, conf, id); err != nil {
-		log.New(os.Stderr, "", 0).Println("Error at create#createLogGroup")
 		return nil, nil, err
 	}
 	// Make a temporary IAM role
-	roleARN, err := createIAMRole(ctx, sess, conf, id)
+	role, err := createIAMRole(ctx, sess, conf, id)
 	if err != nil {
-		log.New(os.Stderr, "", 0).Println("Error at create#createIAMRole")
 		return nil, nil, err
 	}
 	// Make a temporary task definition
-	taskARN, err := registerTaskDef(ctx, sess, conf, id, image, aws.StringValue(roleARN))
+	task, err := registerTaskDef(ctx, sess, conf, id, image, aws.StringValue(role))
 	if err != nil {
-		log.New(os.Stderr, "", 0).Println("Error at create#registerTaskDef")
 		return nil, nil, err
 	}
-	return taskARN, roleARN, nil
+	return task, role, nil
 }
 
-func createLogGroup(ctx aws.Context, sess *session.Session, conf *Config, id string) error {
+func createLogGroup(ctx context.Context, sess *session.Session, conf *Config, id string) error {
 	_, err := cw.New(sess).CreateLogGroupWithContext(ctx, &cw.CreateLogGroupInput{
 		LogGroupName: aws.String(fmt.Sprintf("/ecs/%s", id)),
 	})
 	return err
 }
 
-func createIAMRole(ctx aws.Context, sess *session.Session, conf *Config, id string) (*string, error) {
+func createIAMRole(ctx context.Context, sess *session.Session, conf *Config, id string) (*string, error) {
 	out, err := iam.New(sess).CreateRoleWithContext(ctx, &iam.CreateRoleInput{
 		RoleName: aws.String(id),
 		AssumeRolePolicyDocument: aws.String(`{
@@ -352,7 +352,7 @@ func createIAMRole(ctx aws.Context, sess *session.Session, conf *Config, id stri
 	return out.Role.Arn, nil
 }
 
-func registerTaskDef(ctx aws.Context, sess *session.Session, conf *Config, id string, image *string, role string) (*string, error) {
+func registerTaskDef(ctx context.Context, sess *session.Session, conf *Config, id string, image *string, role string) (*string, error) {
 	entrypoint := []*string{}
 	if conf.Entrypoint != nil && len(conf.Entrypoint) > 0 {
 		for _, cmds := range conf.Entrypoint {
@@ -404,7 +404,7 @@ func registerTaskDef(ctx aws.Context, sess *session.Session, conf *Config, id st
 			},
 		},
 	}
-	if os.Getenv("APP_DEBUG") == "1" {
+	if conf.IsDebugMode {
 		lib.PrintJSON(input)
 	}
 	out, err := ecs.New(sess).RegisterTaskDefinitionWithContext(ctx, &input)
@@ -414,7 +414,7 @@ func registerTaskDef(ctx aws.Context, sess *session.Session, conf *Config, id st
 	return out.TaskDefinition.TaskDefinitionArn, nil
 }
 
-func run(ctx aws.Context, sess *session.Session, conf *Config, taskARN *string, id string) ([]*ecs.Task, error) {
+func run(ctx context.Context, sess *session.Session, conf *Config, taskARN *string, id string) ([]*ecs.Task, error) {
 	input := ecs.RunTaskInput{
 		Cluster:        conf.EcsCluster,
 		LaunchType:     aws.String(fargate),
@@ -428,17 +428,17 @@ func run(ctx aws.Context, sess *session.Session, conf *Config, taskARN *string, 
 			},
 		},
 	}
-	if os.Getenv("APP_DEBUG") == "1" {
+	if conf.IsDebugMode {
 		lib.PrintJSON(input)
 	}
 	// Avoid the following error
 	// ClientException: ECS was unable to assume the role that was provided for this task.
-	timeout := time.After(15 * time.Second)
+	timeout := time.After(30 * time.Second)
 	for {
 		var err error
 		select {
 		case <-timeout:
-			return nil, err
+			return nil, errors.New("The execute role for this task was not in Active in 30sec")
 		default:
 			var out *ecs.RunTaskOutput
 			out, err = ecs.New(sess).RunTaskWithContext(ctx, &input)
@@ -454,7 +454,7 @@ func run(ctx aws.Context, sess *session.Session, conf *Config, taskARN *string, 
 	}
 }
 
-func waitForTaskDone(ctx aws.Context, sess *session.Session, conf *Config, tasks []*ecs.Task) (*int64, error) {
+func waitForTaskDone(ctx context.Context, sess *session.Session, conf *Config, tasks []*ecs.Task) (*int64, error) {
 	timeout := time.After(time.Duration(aws.Int64Value(conf.TaskTimeout)) * time.Minute)
 	taskARNs := []*string{}
 	for _, task := range tasks {
@@ -478,7 +478,7 @@ func waitForTaskDone(ctx aws.Context, sess *session.Session, conf *Config, tasks
 					done = done && strings.EqualFold(aws.StringValue(task.LastStatus), "STOPPED")
 				}
 				if done {
-					if os.Getenv("APP_DEBUG") == "1" {
+					if conf.IsDebugMode {
 						lib.PrintJSON(tasks.Tasks)
 					}
 					if len(tasks.Tasks) > 0 && len(tasks.Tasks[0].Containers) > 0 {
@@ -494,7 +494,7 @@ func waitForTaskDone(ctx aws.Context, sess *session.Session, conf *Config, tasks
 
 var regTaskID = regexp.MustCompile("task/(.*)")
 
-func retrieveLogs(ctx aws.Context, sess *session.Session, id string, tasks []*ecs.Task) map[string][]*cw.OutputLogEvent {
+func retrieveLogs(ctx context.Context, sess *session.Session, id string, tasks []*ecs.Task) map[string][]*cw.OutputLogEvent {
 	result := map[string][]*cw.OutputLogEvent{}
 
 	for _, task := range tasks {
@@ -514,49 +514,47 @@ func retrieveLogs(ctx aws.Context, sess *session.Session, id string, tasks []*ec
 	return result
 }
 
-func deleteResouces(ctx aws.Context, sess *session.Session, id string, task *string) {
+// DeleteResouces deletes temporary AWS resources
+func DeleteResouces(conf *Config) {
+	sess, _ := lib.Session(conf.AwsAccessKey, conf.AwsSecretKey, conf.AwsRegion, nil) // nolint
 
 	// Delete the temporary task definition
-	deregisterTaskDef(ctx, sess, task)
+	deregisterTaskDef(sess, taskARN)
 
 	// Delete the temporary IAM role
-	deleteIAMRole(ctx, sess, id)
+	deleteIAMRole(sess, resourceID)
 
 	// Delete the temporary log group
-	deleteLogGroup(ctx, sess, id)
+	deleteLogGroup(sess, resourceID)
 
 	// Delete the temporary ECS cluster
-	deleteECSCluster(ctx, sess, id)
+	deleteECSCluster(sess, resourceID)
 }
 
-func deregisterTaskDef(ctx aws.Context, sess *session.Session, taskARN *string) error {
-	_, err := ecs.New(sess).DeregisterTaskDefinitionWithContext(ctx, &ecs.DeregisterTaskDefinitionInput{
+func deregisterTaskDef(sess *session.Session, taskARN *string) {
+	ecs.New(sess).DeregisterTaskDefinition(&ecs.DeregisterTaskDefinitionInput{ // nolint
 		TaskDefinition: taskARN,
 	})
-	return err
 }
 
-func deleteIAMRole(ctx aws.Context, sess *session.Session, id string) error {
-	iam.New(sess).DetachRolePolicyWithContext(ctx, &iam.DetachRolePolicyInput{
+func deleteIAMRole(sess *session.Session, id string) {
+	iam.New(sess).DetachRolePolicy(&iam.DetachRolePolicyInput{ // nolint
 		RoleName:  aws.String(id),
 		PolicyArn: aws.String(ecsExecutionPolicyArn),
 	})
-	_, err := iam.New(sess).DeleteRoleWithContext(ctx, &iam.DeleteRoleInput{
+	iam.New(sess).DeleteRole(&iam.DeleteRoleInput{ // nolint
 		RoleName: aws.String(id),
 	})
-	return err
 }
 
-func deleteLogGroup(ctx aws.Context, sess *session.Session, id string) error {
-	_, err := cw.New(sess).DeleteLogGroupWithContext(ctx, &cw.DeleteLogGroupInput{
+func deleteLogGroup(sess *session.Session, id string) {
+	cw.New(sess).DeleteLogGroup(&cw.DeleteLogGroupInput{ // nolint
 		LogGroupName: aws.String(fmt.Sprintf("/ecs/%s", id)),
 	})
-	return err
 }
 
-func deleteECSCluster(ctx aws.Context, sess *session.Session, id string) error {
-	_, err := ecs.New(sess).DeleteClusterWithContext(ctx, &ecs.DeleteClusterInput{
+func deleteECSCluster(sess *session.Session, id string) {
+	ecs.New(sess).DeleteCluster(&ecs.DeleteClusterInput{ // nolint
 		Cluster: aws.String(id),
 	})
-	return err
 }

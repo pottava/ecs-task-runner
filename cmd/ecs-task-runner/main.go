@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime/debug"
+	"syscall"
 
 	"github.com/aws/aws-sdk-go/aws"
 	commands "github.com/pottava/ecs-task-runner"
@@ -21,8 +24,10 @@ var (
 func main() {
 	defer func() {
 		if err := recover(); err != nil {
-			debug.PrintStack()
-			log.Logger.Fatal(err)
+			if os.Getenv("APP_DEBUG") == "1" {
+				debug.PrintStack()
+			}
+			log.Errors.Fatal(err)
 		}
 	}()
 
@@ -97,9 +102,23 @@ func main() {
 				conf.SecurityGroups = append(conf.SecurityGroups, aws.String(securityGroup))
 			}
 		}
-		exitCode, err := commands.Run(conf)
+		conf.IsDebugMode = os.Getenv("APP_DEBUG") == "1"
+
+		ctx, cancel := context.WithCancel(context.Background())
+		c := make(chan os.Signal)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-c
+			cancel()
+			commands.DeleteResouces(conf)
+			os.Exit(1)
+		}()
+		exitCode, err := commands.Run(ctx, conf)
 		if err != nil {
-			log.Logger.Fatal(err)
+			if conf.IsDebugMode {
+				debug.PrintStack()
+			}
+			log.Errors.Fatal(err)
 			return
 		}
 		os.Exit(int(aws.Int64Value(exitCode)))

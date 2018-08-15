@@ -14,10 +14,10 @@ func Session(awsAccessKey, awsSecretKey, awsRegion, endpoint *string) (*session.
 		level = aws.LogLevelType(aws.LogDebug)
 	}
 	if awsAccessKey != nil {
-		os.Setenv("AWS_ACCESS_KEY_ID", aws.StringValue(awsAccessKey))
+		os.Setenv("AWS_ACCESS_KEY_ID", aws.StringValue(awsAccessKey)) // nolint
 	}
 	if awsSecretKey != nil {
-		os.Setenv("AWS_SECRET_ACCESS_KEY", aws.StringValue(awsSecretKey))
+		os.Setenv("AWS_SECRET_ACCESS_KEY", aws.StringValue(awsSecretKey)) // nolint
 	}
 	cfg := &aws.Config{
 		Region:   awsRegion,

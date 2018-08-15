@@ -6,8 +6,11 @@ import (
 	"os"
 )
 
-// Logger is a global logger for this application
-var Logger = native.New(os.Stdout, "", 0)
+// Global loggers for this application
+var (
+	Logger = native.New(os.Stdout, "", 0)
+	Errors = native.New(os.Stderr, "", 0)
+)
 
 // PrintJSON print JSON marshaled value
 func PrintJSON(records interface{}) {
