@@ -349,36 +349,7 @@ func createIAMRole(ctx aws.Context, sess *session.Session, conf *Config, id stri
 	}); err != nil {
 		return nil, err
 	}
-	if err = waitForPolicyActive(ctx, sess, id); err != nil {
-		return nil, err
-	}
 	return out.Role.Arn, nil
-}
-
-func waitForPolicyActive(ctx aws.Context, sess *session.Session, id string) error {
-
-	// Avoid the following error
-	// ClientException: ECS was unable to assume the role that was provided for this task.
-	time.Sleep(15 * time.Second)
-
-	timeout := time.After(10 * time.Second)
-	for {
-		select {
-		case <-timeout:
-			return errors.New("The IAM role for the task did not get active")
-		default:
-			policies, err := iam.New(sess).ListAttachedRolePoliciesWithContext(ctx, &iam.ListAttachedRolePoliciesInput{
-				RoleName: aws.String(id),
-			})
-			if err != nil {
-				return err
-			}
-			if len(policies.AttachedPolicies) > 0 {
-				return nil
-			}
-			time.Sleep(1 * time.Second)
-		}
-	}
 }
 
 func registerTaskDef(ctx aws.Context, sess *session.Session, conf *Config, id string, image *string, role string) (*string, error) {
@@ -460,11 +431,27 @@ func run(ctx aws.Context, sess *session.Session, conf *Config, taskARN *string, 
 	if os.Getenv("APP_DEBUG") == "1" {
 		lib.PrintJSON(input)
 	}
-	out, err := ecs.New(sess).RunTaskWithContext(ctx, &input)
-	if err != nil {
-		return nil, err
+	// Avoid the following error
+	// ClientException: ECS was unable to assume the role that was provided for this task.
+	timeout := time.After(15 * time.Second)
+	for {
+		var err error
+		select {
+		case <-timeout:
+			return nil, err
+		default:
+			var out *ecs.RunTaskOutput
+			out, err = ecs.New(sess).RunTaskWithContext(ctx, &input)
+			if err == nil {
+				return out.Tasks, nil
+			}
+			if ae, ok := err.(awserr.Error); ok && strings.EqualFold(ae.Code(), ecs.ErrCodeClientException) {
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			return nil, err
+		}
 	}
-	return out.Tasks, nil
 }
 
 func waitForTaskDone(ctx aws.Context, sess *session.Session, conf *Config, tasks []*ecs.Task) (*int64, error) {
