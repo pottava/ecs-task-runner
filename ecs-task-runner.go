@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	cw "github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -45,7 +46,7 @@ type Config struct {
 }
 
 // Run runs the docker image on Amazon ECS
-func Run(conf *Config) error {
+func Run(conf *Config) (exitCode *int64, err error) {
 	ctx := aws.BackgroundContext()
 	if os.Getenv("APP_DEBUG") == "1" {
 		lib.PrintJSON(conf)
@@ -53,11 +54,11 @@ func Run(conf *Config) error {
 	// Check AWS credentials
 	sess, err := lib.Session(conf.AwsAccessKey, conf.AwsSecretKey, conf.AwsRegion, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	account, err := sts.New(sess).GetCallerIdentityWithContext(ctx, nil)
 	if err != nil {
-		return errors.New("Provided AWS credentials are invalid")
+		return nil, errors.New("Provided AWS credentials are invalid")
 	}
 	if os.Getenv("APP_DEBUG") == "1" {
 		lib.PrintJSON(account)
@@ -65,31 +66,32 @@ func Run(conf *Config) error {
 	// Check existence of the image on ECR
 	image, err := validateImageName(conf, sess, aws.StringValue(account.Account))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Generate UUID
 	id := fmt.Sprintf("ecs-task-runner-%s", uuid.New().String())
 
 	// Ensure resource existence
 	if err = ensureAWSResources(ctx, sess, conf, id); err != nil {
-		return err
+		return nil, err
 	}
 	// Create AWS resources
 	taskARN, _, err := createResouces(ctx, sess, conf, id, image)
 	if err != nil {
 		deleteResouces(ctx, sess, id, taskARN)
-		return err
+		return nil, err
 	}
 	// Run the ECS task
 	tasks, err := run(ctx, sess, conf, taskARN, id)
 	if err != nil {
 		deleteResouces(ctx, sess, id, taskARN)
-		return err
+		return nil, err
 	}
 	// Wait for its done
-	if err = waitForTaskDone(ctx, sess, conf, tasks); err != nil {
+	exitCode, err = waitForTaskDone(ctx, sess, conf, tasks)
+	if err != nil {
 		deleteResouces(ctx, sess, id, taskARN)
-		return err
+		return nil, err
 	}
 	// Retrieve app log
 	logs := retrieveLogs(ctx, sess, id, tasks)
@@ -113,7 +115,7 @@ func Run(conf *Config) error {
 		seq++
 	}
 	lib.PrintJSON(result)
-	return nil
+	return exitCode, nil
 }
 
 func validateImageName(conf *Config, sess *session.Session, account string) (*string, error) {
@@ -155,6 +157,23 @@ func validateImageName(conf *Config, sess *session.Session, account string) (*st
 		aws.StringValue(imageName),
 		aws.StringValue(imageTag),
 	)), nil
+}
+
+func parseImageName(value string) (*string, *string, *string, error) {
+	ref, err := reference.Parse(value)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	imageHost := ""
+	imageName := ""
+	if candidate, ok := ref.(reference.Named); ok {
+		imageHost, imageName = reference.SplitHostname(candidate)
+	}
+	imageTag := "latest"
+	if candidate, ok := ref.(reference.Tagged); ok {
+		imageTag = candidate.Tag()
+	}
+	return aws.String(imageHost), aws.String(imageName), aws.String(imageTag), nil
 }
 
 func ensureAWSResources(ctx aws.Context, sess *session.Session, conf *Config, id string) error {
@@ -270,23 +289,6 @@ func findDefaultSg(ctx aws.Context, sess *session.Session, vpc *string) *string 
 		return nil
 	}
 	return out.SecurityGroups[0].GroupId
-}
-
-func parseImageName(value string) (*string, *string, *string, error) {
-	ref, err := reference.Parse(value)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	imageHost := ""
-	imageName := ""
-	if candidate, ok := ref.(reference.Named); ok {
-		imageHost, imageName = reference.SplitHostname(candidate)
-	}
-	imageTag := "latest"
-	if candidate, ok := ref.(reference.Tagged); ok {
-		imageTag = candidate.Tag()
-	}
-	return aws.String(imageHost), aws.String(imageName), aws.String(imageTag), nil
 }
 
 const (
@@ -465,7 +467,7 @@ func run(ctx aws.Context, sess *session.Session, conf *Config, taskARN *string, 
 	return out.Tasks, nil
 }
 
-func waitForTaskDone(ctx aws.Context, sess *session.Session, conf *Config, tasks []*ecs.Task) error {
+func waitForTaskDone(ctx aws.Context, sess *session.Session, conf *Config, tasks []*ecs.Task) (*int64, error) {
 	timeout := time.After(time.Duration(aws.Int64Value(conf.TaskTimeout)) * time.Minute)
 	taskARNs := []*string{}
 	for _, task := range tasks {
@@ -474,14 +476,14 @@ func waitForTaskDone(ctx aws.Context, sess *session.Session, conf *Config, tasks
 	for {
 		select {
 		case <-timeout:
-			return fmt.Errorf("The task did not finish in %d minutes", aws.Int64Value(conf.TaskTimeout))
+			return nil, fmt.Errorf("The task did not finish in %d minutes", aws.Int64Value(conf.TaskTimeout))
 		default:
 			tasks, err := ecs.New(sess).DescribeTasksWithContext(ctx, &ecs.DescribeTasksInput{
 				Cluster: conf.EcsCluster,
 				Tasks:   taskARNs,
 			})
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if len(tasks.Tasks) > 0 {
 				done := true
@@ -492,7 +494,10 @@ func waitForTaskDone(ctx aws.Context, sess *session.Session, conf *Config, tasks
 					if os.Getenv("APP_DEBUG") == "1" {
 						lib.PrintJSON(tasks.Tasks)
 					}
-					return nil
+					if len(tasks.Tasks) > 0 && len(tasks.Tasks[0].Containers) > 0 {
+						return tasks.Tasks[0].Containers[0].ExitCode, nil
+					}
+					return aws.Int64(-1), nil
 				}
 			}
 			time.Sleep(5 * time.Second)

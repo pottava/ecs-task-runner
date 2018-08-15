@@ -97,9 +97,11 @@ func main() {
 				conf.SecurityGroups = append(conf.SecurityGroups, aws.String(securityGroup))
 			}
 		}
-		if err := commands.Run(conf); err != nil {
+		exitCode, err := commands.Run(conf)
+		if err != nil {
 			log.Logger.Fatal(err)
 			return
 		}
+		os.Exit(int(aws.Int64Value(exitCode)))
 	}
 }
