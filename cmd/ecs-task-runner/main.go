@@ -17,7 +17,7 @@ import (
 
 // for compile flags
 var (
-	version = "1.1.x"
+	version = "1.2.x"
 	commit  string
 	date    string
 )
@@ -151,9 +151,6 @@ func main() {
 		// Execute
 		exitCode, err := commands.Run(ctx, conf)
 		if err != nil {
-			if conf.IsDebugMode {
-				debug.PrintStack()
-			}
 			log.Errors.Fatal(err)
 			return
 		}

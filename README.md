@@ -5,8 +5,9 @@
 [![pottava/ecs-task-runner](http://dockeri.co/image/pottava/ecs-task-runner)](https://hub.docker.com/r/pottava/ecs-task-runner/)
 
 Supported tags and respective `Dockerfile` links:  
-・latest ([Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/Dockerfile))  
-・1 ([Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/Dockerfile))  
+・latest ([Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/1.2/Dockerfile))  
+・1.2 ([Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/1.2/Dockerfile))  
+・1 ([Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/1.2/Dockerfile))  
 
 
 ## Description
@@ -19,7 +20,7 @@ This is a synchronous task runner for AWS Fargate. It runs a docker container on
 curl:
 
 ```
-$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/1.1/ecs-task-runner_darwin_amd64 && chmod +x ecs-task-runner
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/1.2/ecs-task-runner_darwin_amd64 && chmod +x ecs-task-runner
 ```
 
 go:
