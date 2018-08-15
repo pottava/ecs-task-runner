@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -20,6 +21,7 @@ import (
 	"github.com/docker/distribution/reference"
 	"github.com/google/uuid"
 	"github.com/pottava/ecs-task-runner/lib"
+	"golang.org/x/sync/errgroup"
 )
 
 // Config is set of configurations
@@ -47,13 +49,18 @@ type Config struct {
 }
 
 var (
-	resourceID string
-	taskARN    *string
+	resourceID    string
+	taskARN       *string
+	exitWithError *int64
 )
+
+func init() {
+	resourceID = fmt.Sprintf("ecs-task-runner-%s", uuid.New().String())
+	exitWithError = aws.Int64(1)
+}
 
 // Run runs the docker image on Amazon ECS
 func Run(ctx context.Context, conf *Config) (exitCode *int64, err error) {
-	resourceID = fmt.Sprintf("ecs-task-runner-%s", uuid.New().String())
 	startedAt := time.Now()
 
 	if conf.IsDebugMode {
@@ -62,78 +69,86 @@ func Run(ctx context.Context, conf *Config) (exitCode *int64, err error) {
 	// Check AWS credentials
 	sess, err := lib.Session(conf.AwsAccessKey, conf.AwsSecretKey, conf.AwsRegion, nil)
 	if err != nil {
-		return nil, err
+		return exitWithError, err
 	}
-	account, err := sts.New(sess).GetCallerIdentityWithContext(ctx, nil)
-	if err != nil {
-		return nil, errors.New("Provided AWS credentials are invalid")
-	}
-	if conf.IsDebugMode {
-		lib.PrintJSON(account)
-	}
+	eg, _ := errgroup.WithContext(context.Background())
+
 	// Check existence of the image on ECR
-	image, err := validateImageName(ctx, conf, sess, aws.StringValue(account.Account))
-	if err != nil {
-		return nil, err
-	}
+	var image *string
+	eg.Go(func() (err error) {
+		image, err = validateImageName(ctx, conf, sess)
+		return err
+	})
 	// Ensure resource existence
-	if err = ensureAWSResources(ctx, sess, conf, resourceID); err != nil {
-		return nil, err
+	eg.Go(func() (err error) {
+		return ensureAWSResources(ctx, sess, conf, resourceID)
+	})
+	if err = eg.Wait(); err != nil {
+		return exitWithError, err
 	}
 	// Create AWS resources
 	var taskdef *ecs.RegisterTaskDefinitionInput
 	taskARN, _, taskdef, err = createResouces(ctx, sess, conf, resourceID, image)
 	if err != nil {
 		DeleteResouces(conf)
-		return nil, err
+		return exitWithError, err
 	}
 	// Run the ECS task
+	runTaskAt := time.Now()
 	tasks, runconfig, err := run(ctx, sess, conf, taskARN, resourceID)
 	if err != nil {
 		DeleteResouces(conf)
-		return nil, err
+		return exitWithError, err
 	}
-	runTaskAt := time.Now()
-
 	// Wait for its done
 	tasks, err = waitForTaskDone(ctx, sess, conf, tasks)
 	if err != nil {
 		DeleteResouces(conf)
-		return nil, err
+		return exitWithError, err
 	}
 	// Retrieve app log
 	logs := retrieveLogs(ctx, sess, resourceID, tasks)
+	retrieveLogsAt := time.Now()
 
 	// Delete AWS resources
 	DeleteResouces(conf)
 
 	// Format the result
-	outputResults(conf, startedAt, runTaskAt, logs, taskdef, runconfig, tasks)
+	outputResults(conf, startedAt, runTaskAt, retrieveLogsAt, logs, taskdef, runconfig, tasks)
 
 	if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
-		return aws.Int64(1), nil
+		return exitWithError, nil
 	}
 	return tasks[0].Containers[0].ExitCode, nil
 }
 
-func validateImageName(ctx context.Context, conf *Config, sess *session.Session, account string) (*string, error) {
+func validateImageName(ctx context.Context, conf *Config, sess *session.Session) (*string, error) {
 	imageHost, imageName, imageTag, err := parseImageName(conf.Image)
 	if err != nil {
 		lib.Errors.Println("Provided image name is invalid.")
 		return nil, err
 	}
 	// Try to make up ECR image name
-	if aws.BoolValue(conf.ForceECR) && !strings.Contains(aws.StringValue(imageHost), account) {
-		imageName = aws.String(fmt.Sprintf(
-			"%s/%s",
-			aws.StringValue(imageHost),
-			aws.StringValue(imageName),
-		))
-		imageHost = aws.String(fmt.Sprintf(
-			"%s.dkr.ecr.%s.amazonaws.com",
-			account,
-			aws.StringValue(conf.AwsRegion),
-		))
+	if aws.BoolValue(conf.ForceECR) {
+		account, err := sts.New(sess).GetCallerIdentityWithContext(ctx, nil)
+		if err != nil {
+			return nil, errors.New("Provided AWS credentials are invalid")
+		}
+		if conf.IsDebugMode {
+			lib.PrintJSON(account)
+		}
+		if !strings.Contains(aws.StringValue(imageHost), aws.StringValue(account.Account)) {
+			imageName = aws.String(fmt.Sprintf(
+				"%s/%s",
+				aws.StringValue(imageHost),
+				aws.StringValue(imageName),
+			))
+			imageHost = aws.String(fmt.Sprintf(
+				"%s.dkr.ecr.%s.amazonaws.com",
+				account,
+				aws.StringValue(conf.AwsRegion),
+			))
+		}
 	}
 	if strings.Contains(aws.StringValue(imageHost), "amazonaws.com") {
 		if _, err := ecr.New(sess).DescribeRepositoriesWithContext(ctx, &ecr.DescribeRepositoriesInput{
@@ -175,50 +190,57 @@ func parseImageName(value string) (*string, *string, *string, error) {
 }
 
 func ensureAWSResources(ctx context.Context, sess *session.Session, conf *Config, id string) error {
-
-	// Ensure cluster existence
-	if conf.EcsCluster == nil || aws.StringValue(conf.EcsCluster) == "" {
-		conf.EcsCluster = aws.String(id)
-	}
-	if err := createClusterIfNotExist(ctx, sess, conf.EcsCluster); err != nil {
-		return nil
-	}
+	eg, _ := errgroup.WithContext(context.Background())
 	vpc := findDefaultVPC(ctx, sess)
 
-	// Ensure subnets existence
-	subnets := []*string{}
-	if conf.Subnets == nil || len(conf.Subnets) == 0 {
-		defSubnet := findDefaultSubnet(ctx, sess, vpc)
-		if defSubnet == nil {
-			return errors.New("There is no default subnet")
+	// Ensure cluster existence
+	eg.Go(func() error {
+		if conf.EcsCluster == nil || aws.StringValue(conf.EcsCluster) == "" {
+			conf.EcsCluster = aws.String(id)
 		}
-		subnets = append(subnets, defSubnet)
-	} else {
-		for _, arg := range conf.Subnets {
-			for _, subnet := range strings.Split(aws.StringValue(arg), ",") {
-				subnets = append(subnets, aws.String(subnet))
+		return createClusterIfNotExist(ctx, sess, conf.EcsCluster)
+	})
+
+	// Ensure subnets existence
+	eg.Go(func() (err error) {
+		subnets := []*string{}
+		if conf.Subnets == nil || len(conf.Subnets) == 0 {
+			defSubnet := findDefaultSubnet(ctx, sess, vpc)
+			if defSubnet == nil {
+				return errors.New("There is no default subnet")
+			}
+			subnets = append(subnets, defSubnet)
+		} else {
+			for _, arg := range conf.Subnets {
+				for _, subnet := range strings.Split(aws.StringValue(arg), ",") {
+					subnets = append(subnets, aws.String(subnet))
+				}
 			}
 		}
-	}
-	conf.Subnets = subnets
+		conf.Subnets = subnets
+		return nil
+	})
 
 	// Ensure security-group existence
-	sgs := []*string{}
-	if conf.SecurityGroups == nil || len(conf.SecurityGroups) == 0 {
-		defSecurityGroup := findDefaultSg(ctx, sess, vpc)
-		if defSecurityGroup == nil {
-			return errors.New("There is no default security group")
-		}
-		sgs = append(sgs, defSecurityGroup)
-	} else {
-		for _, arg := range conf.SecurityGroups {
-			for _, sg := range strings.Split(aws.StringValue(arg), ",") {
-				sgs = append(sgs, aws.String(sg))
+	eg.Go(func() (err error) {
+		sgs := []*string{}
+		if conf.SecurityGroups == nil || len(conf.SecurityGroups) == 0 {
+			defSecurityGroup := findDefaultSg(ctx, sess, vpc)
+			if defSecurityGroup == nil {
+				return errors.New("There is no default security group")
+			}
+			sgs = append(sgs, defSecurityGroup)
+		} else {
+			for _, arg := range conf.SecurityGroups {
+				for _, sg := range strings.Split(aws.StringValue(arg), ",") {
+					sgs = append(sgs, aws.String(sg))
+				}
 			}
 		}
-	}
-	conf.SecurityGroups = sgs
-	return nil
+		conf.SecurityGroups = sgs
+		return nil
+	})
+	return eg.Wait()
 }
 
 func createClusterIfNotExist(ctx context.Context, sess *session.Session, cluster *string) error {
@@ -296,19 +318,24 @@ const (
 	awsCWLogs             = "awslogs"
 )
 
-func createResouces(ctx context.Context, sess *session.Session, conf *Config, id string, image *string) (*string, *string, *ecs.RegisterTaskDefinitionInput, error) {
-	// Make a temporary log group
-	if err := createLogGroup(ctx, sess, conf, id); err != nil {
-		return nil, nil, nil, err
-	}
-	// Make a temporary IAM role
-	role, err := createIAMRole(ctx, sess, conf, id)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	// Make a temporary task definition
-	task, taskdef, err := registerTaskDef(ctx, sess, conf, id, image, aws.StringValue(role))
-	if err != nil {
+func createResouces(ctx context.Context, sess *session.Session, conf *Config, id string, image *string) (task *string, role *string, taskdef *ecs.RegisterTaskDefinitionInput, e error) {
+	eg, _ := errgroup.WithContext(context.Background())
+
+	eg.Go(func() error {
+		// Make a temporary log group
+		return createLogGroup(ctx, sess, conf, id)
+	})
+	eg.Go(func() (err error) {
+		// Make a temporary IAM role
+		role, err = createIAMRole(ctx, sess, conf, id)
+		if err != nil {
+			return err
+		}
+		// Make a temporary task definition
+		task, taskdef, err = registerTaskDef(ctx, sess, conf, id, image, aws.StringValue(role))
+		return
+	})
+	if err := eg.Wait(); err != nil {
 		return nil, nil, nil, err
 	}
 	return task, role, taskdef, nil
@@ -493,18 +520,30 @@ func retrieveLogs(ctx context.Context, sess *session.Session, id string, tasks [
 // DeleteResouces deletes temporary AWS resources
 func DeleteResouces(conf *Config) {
 	sess, _ := lib.Session(conf.AwsAccessKey, conf.AwsSecretKey, conf.AwsRegion, nil) // nolint
+	wg := sync.WaitGroup{}
+	wg.Add(4)
 
 	// Delete the temporary task definition
-	deregisterTaskDef(sess, taskARN)
-
+	go func() {
+		defer wg.Done()
+		deregisterTaskDef(sess, taskARN)
+	}()
 	// Delete the temporary IAM role
-	deleteIAMRole(sess, resourceID)
-
+	go func() {
+		defer wg.Done()
+		deleteIAMRole(sess, resourceID)
+	}()
 	// Delete the temporary log group
-	deleteLogGroup(sess, resourceID)
-
+	go func() {
+		defer wg.Done()
+		deleteLogGroup(sess, resourceID)
+	}()
 	// Delete the temporary ECS cluster
-	deleteECSCluster(sess, resourceID)
+	go func() {
+		defer wg.Done()
+		deleteECSCluster(sess, resourceID)
+	}()
+	wg.Wait()
 }
 
 func deregisterTaskDef(sess *session.Session, taskARN *string) {
@@ -535,7 +574,7 @@ func deleteECSCluster(sess *session.Session, id string) {
 	})
 }
 
-func outputResults(conf *Config, startedAt, runTaskAt time.Time, logs map[string][]*cw.OutputLogEvent, taskdef *ecs.RegisterTaskDefinitionInput, runconfig *ecs.RunTaskInput, tasks []*ecs.Task) {
+func outputResults(conf *Config, startedAt, runTaskAt, logsAt time.Time, logs map[string][]*cw.OutputLogEvent, taskdef *ecs.RegisterTaskDefinitionInput, runconfig *ecs.RunTaskInput, tasks []*ecs.Task) {
 	result := map[string]interface{}{}
 	seq := 1
 	for _, value := range logs {
@@ -553,14 +592,15 @@ func outputResults(conf *Config, startedAt, runTaskAt time.Time, logs map[string
 	if aws.BoolValue(conf.ExtendedOutput) {
 		timeline := map[string]string{}
 		if len(tasks) > 0 {
-			timeline["1"] = fmt.Sprintf("AppStartedAt:              %s", rfc3339(startedAt))
-			timeline["2"] = fmt.Sprintf("AppRunFargateAt:           %s", rfc3339(runTaskAt))
-			timeline["3"] = fmt.Sprintf("FargateCreatedAt:          %s", toStr(tasks[0].CreatedAt))
-			timeline["4"] = fmt.Sprintf("FargatePullStartedAt:      %s", toStr(tasks[0].PullStartedAt))
-			timeline["5"] = fmt.Sprintf("FargatePullStoppedAt:      %s", toStr(tasks[0].PullStoppedAt))
-			timeline["6"] = fmt.Sprintf("FargateStartedAt:          %s", toStr(tasks[0].StartedAt))
-			timeline["7"] = fmt.Sprintf("FargateExecutionStoppedAt: %s", toStr(tasks[0].ExecutionStoppedAt))
-			timeline["8"] = fmt.Sprintf("FargateStoppedAt:          %s", toStr(tasks[0].StoppedAt))
+			timeline["0"] = fmt.Sprintf("AppStartedAt:              %s", rfc3339(startedAt))
+			timeline["1"] = fmt.Sprintf("AppTriedToRunFargateAt:    %s", rfc3339(runTaskAt))
+			timeline["2"] = fmt.Sprintf("FargateCreatedAt:          %s", toStr(tasks[0].CreatedAt))
+			timeline["3"] = fmt.Sprintf("FargatePullStartedAt:      %s", toStr(tasks[0].PullStartedAt))
+			timeline["4"] = fmt.Sprintf("FargatePullStoppedAt:      %s", toStr(tasks[0].PullStoppedAt))
+			timeline["5"] = fmt.Sprintf("FargateStartedAt:          %s", toStr(tasks[0].StartedAt))
+			timeline["6"] = fmt.Sprintf("FargateExecutionStoppedAt: %s", toStr(tasks[0].ExecutionStoppedAt))
+			timeline["7"] = fmt.Sprintf("FargateStoppedAt:          %s", toStr(tasks[0].StoppedAt))
+			timeline["8"] = fmt.Sprintf("AppRetrievedLogsAt:        %s", rfc3339(logsAt))
 			timeline["9"] = fmt.Sprintf("AppFinishedAt:             %s", rfc3339(time.Now()))
 		}
 		result["meta"] = map[string]interface{}{
