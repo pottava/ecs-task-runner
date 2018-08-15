@@ -49,6 +49,7 @@ AWS_DEFAULT_REGION        | region, r       | AWS `region` for API access     | 
 ECS_CLUSTER               | cluster, c      | Amazon ECS cluster name         |          | 
 SUBNETS                   | subnets         | Fargate's Subnets               |          |
 SECURITY_GROUPS           | security_groups | Fargate's SecurityGroups        |          |
+TASKDEF_FAMILY            | taskdef_family  | ECS Task Definition family name |          | ecs-task-runner
 TASK_ROLE                 | role            | ARN of an IAM Role for the task |          |
 CPU                       | cpu             | Requested vCPU to run Fargate   |          | 256
 MEMORY                    | memory          | Requested memory to run Fargate |          | 512

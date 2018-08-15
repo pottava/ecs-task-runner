@@ -49,6 +49,8 @@ func main() {
 		Short('i').Envar("DOCKER_IMAGE").Required().String()
 	conf.ForceECR = run.Flag("force_ecr", "If it's True, you can use the shortened image name.").
 		Short('f').Envar("FORCE_ECR").Default("false").Bool()
+	conf.TaskDefFamily = run.Flag("taskdef_family", "ECS Task Definition family name.").
+		Envar("TASKDEF_FAMILY").Default("ecs-task-runner").String()
 	entrypoints := run.Flag("entrypoint", "Override `ENTRYPOINT` of the image.").
 		Envar("ENTRYPOINT").Strings()
 	cmds := run.Flag("command", "Override `CMD` of the image.").

@@ -30,6 +30,7 @@ type Config struct {
 	EcsCluster     *string
 	Image          string
 	ForceECR       *bool
+	TaskDefFamily  *string
 	Entrypoint     []*string
 	Commands       []*string
 	Environments   map[string]*string
@@ -403,7 +404,7 @@ func registerTaskDef(ctx aws.Context, sess *session.Session, conf *Config, id st
 		})
 	}
 	input := ecs.RegisterTaskDefinitionInput{
-		Family:                  aws.String(id),
+		Family:                  conf.TaskDefFamily,
 		RequiresCompatibilities: []*string{aws.String(fargate)},
 		ExecutionRoleArn:        aws.String(role),
 		TaskRoleArn:             conf.TaskRoleArn,
