@@ -488,7 +488,8 @@ func waitForTaskDone(ctx context.Context, sess *session.Session, conf *Config, t
 			if len(tasks.Tasks) > 0 {
 				done := true
 				for _, task := range tasks.Tasks {
-					done = done && strings.EqualFold(aws.StringValue(task.LastStatus), "STOPPED")
+					// done = done && strings.EqualFold(aws.StringValue(task.LastStatus), "STOPPED")
+					done = done && task.ExecutionStoppedAt != nil
 				}
 				if done {
 					if conf.IsDebugMode {
@@ -497,7 +498,7 @@ func waitForTaskDone(ctx context.Context, sess *session.Session, conf *Config, t
 					return tasks.Tasks, nil
 				}
 			}
-			time.Sleep(5 * time.Second)
+			time.Sleep(1 * time.Second)
 		}
 	}
 }
@@ -533,37 +534,43 @@ func DeleteResouces(conf *Config) {
 	// Delete the temporary task definition
 	go func() {
 		defer wg.Done()
-		deregisterTaskDef(sess, taskARN)
+		deregisterTaskDef(conf, sess, taskARN)
 	}()
 	// Delete the temporary log group
 	go func() {
 		defer wg.Done()
-		deleteLogGroup(sess, resourceID)
+		deleteLogGroup(conf, sess, resourceID)
 	}()
 	// Delete the temporary ECS cluster
 	go func() {
 		defer wg.Done()
-		deleteECSCluster(sess, resourceID)
+		deleteECSCluster(conf, sess, resourceID)
 	}()
 	wg.Wait()
 }
 
-func deregisterTaskDef(sess *session.Session, taskARN *string) {
-	ecs.New(sess).DeregisterTaskDefinition(&ecs.DeregisterTaskDefinitionInput{ // nolint
+func deregisterTaskDef(conf *Config, sess *session.Session, taskARN *string) {
+	if _, err := ecs.New(sess).DeregisterTaskDefinition(&ecs.DeregisterTaskDefinitionInput{
 		TaskDefinition: taskARN,
-	})
+	}); err != nil && conf.IsDebugMode {
+		lib.PrintJSON(err)
+	}
 }
 
-func deleteLogGroup(sess *session.Session, id string) {
-	cw.New(sess).DeleteLogGroup(&cw.DeleteLogGroupInput{ // nolint
+func deleteLogGroup(conf *Config, sess *session.Session, id string) {
+	if _, err := cw.New(sess).DeleteLogGroup(&cw.DeleteLogGroupInput{
 		LogGroupName: aws.String(fmt.Sprintf("/ecs/%s", id)),
-	})
+	}); err != nil && conf.IsDebugMode {
+		lib.PrintJSON(err)
+	}
 }
 
-func deleteECSCluster(sess *session.Session, id string) {
-	ecs.New(sess).DeleteCluster(&ecs.DeleteClusterInput{ // nolint
+func deleteECSCluster(conf *Config, sess *session.Session, id string) {
+	if _, err := ecs.New(sess).DeleteCluster(&ecs.DeleteClusterInput{
 		Cluster: aws.String(id),
-	})
+	}); err != nil && conf.IsDebugMode {
+		lib.PrintJSON(err)
+	}
 }
 
 func outputResults(conf *Config, startedAt, runTaskAt, logsAt time.Time, logs map[string][]*cw.OutputLogEvent, taskdef *ecs.RegisterTaskDefinitionInput, runconfig *ecs.RunTaskInput, tasks []*ecs.Task) {
@@ -605,6 +612,9 @@ func outputResults(conf *Config, startedAt, runTaskAt, logsAt time.Time, logs ma
 }
 
 func toStr(t *time.Time) string {
+	if t == nil {
+		return "---"
+	}
 	return rfc3339(aws.TimeValue(t))
 }
 
