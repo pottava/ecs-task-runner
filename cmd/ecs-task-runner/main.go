@@ -13,7 +13,7 @@ import (
 
 // for compile flags
 var (
-	version = "dev"
+	version = "1.1.x"
 	commit  string
 	date    string
 )
@@ -47,6 +47,8 @@ func main() {
 		Short('c').Envar("ECS_CLUSTER").String()
 	image := run.Flag("image", "Docker image name to be executed on ECS.").
 		Short('i').Envar("DOCKER_IMAGE").Required().String()
+	conf.ForceECR = run.Flag("force_ecr", "If it's True, you can use the shortened image name.").
+		Short('f').Envar("FORCE_ECR").Default("false").Bool()
 	entrypoints := run.Flag("entrypoint", "Override `ENTRYPOINT` of the image.").
 		Envar("ENTRYPOINT").Strings()
 	cmds := run.Flag("command", "Override `CMD` of the image.").

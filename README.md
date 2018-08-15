@@ -39,20 +39,21 @@ $ docker pull pottava/ecs-task-runner:1
 
 Environment Variables     | Argument        | Description                     | Required | Default 
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
-DOCKER_IMAGE              | image           | Docker image to be run on ECS   | *        |
+DOCKER_IMAGE              | image, i        | Docker image to be run on ECS   | *        |
+FORCE_ECR                 | force_ecr, f    | True: you can use shortened name |         | false
 ENTRYPOINT                | entrypoint      | Override `ENTRYPOINT` of the image |       |
 COMMAND                   | command         | Override `CMD` of the image     |          |
-AWS_ACCESS_KEY_ID         | access_key      | AWS `access key` for API access | *        |
-AWS_SECRET_ACCESS_KEY     | secret_key      | AWS `secret key` for API access | *        |
-AWS_DEFAULT_REGION        | region          | AWS `region` for API access     |          | us-east-1
-ECS_CLUSTER               | cluster         | Amazon ECS cluster name         |          | 
+AWS_ACCESS_KEY_ID         | access_key, a   | AWS `access key` for API access | *        |
+AWS_SECRET_ACCESS_KEY     | secret_key, s   | AWS `secret key` for API access | *        |
+AWS_DEFAULT_REGION        | region, r       | AWS `region` for API access     |          | us-east-1
+ECS_CLUSTER               | cluster, c      | Amazon ECS cluster name         |          | 
 SUBNETS                   | subnets         | Fargate's Subnets               |          |
 SECURITY_GROUPS           | security_groups | Fargate's SecurityGroups        |          |
 TASK_ROLE                 | role            | ARN of an IAM Role for the task |          |
 CPU                       | cpu             | Requested vCPU to run Fargate   |          | 256
 MEMORY                    | memory          | Requested memory to run Fargate |          | 512
-NUMBER                    | number          | Number of tasks                 |          | 1 
-TASK_TIMEOUT              | timeout         | Timeout minutes for the task    |          | 30
+NUMBER                    | number, n       | Number of tasks                 |          | 1 
+TASK_TIMEOUT              | timeout, t      | Timeout minutes for the task    |          | 30
 
 
 ## Samples

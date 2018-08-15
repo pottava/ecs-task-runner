@@ -29,6 +29,7 @@ type Config struct {
 	AwsRegion      *string
 	EcsCluster     *string
 	Image          string
+	ForceECR       *bool
 	Entrypoint     []*string
 	Commands       []*string
 	Environments   map[string]*string
@@ -121,7 +122,7 @@ func validateImageName(conf *Config, sess *session.Session, account string) (*st
 		return nil, err
 	}
 	// Try to make up ECR image name
-	if !strings.Contains(aws.StringValue(imageHost), account) {
+	if aws.BoolValue(conf.ForceECR) && !strings.Contains(aws.StringValue(imageHost), account) {
 		imageName = aws.String(fmt.Sprintf(
 			"%s/%s",
 			aws.StringValue(imageHost),
@@ -133,17 +134,19 @@ func validateImageName(conf *Config, sess *session.Session, account string) (*st
 			aws.StringValue(conf.AwsRegion),
 		))
 	}
-	repos, err := ecr.New(sess).DescribeRepositories(&ecr.DescribeRepositoriesInput{
-		RepositoryNames: []*string{imageName},
-	})
-	if err != nil {
-		return nil, err
+	if strings.Contains(aws.StringValue(imageHost), "amazonaws.com") {
+		if _, err := ecr.New(sess).DescribeRepositories(&ecr.DescribeRepositoriesInput{
+			RepositoryNames: []*string{imageName},
+		}); err != nil {
+			return nil, err
+		}
 	}
-	if len(repos.Repositories) == 0 {
-		return nil, fmt.Errorf(
-			"Specified image is not in your ECR repositories. [ Image: %s, AWS account: %s ]",
-			aws.StringValue(imageName), account,
-		)
+	if aws.StringValue(imageHost) == "" {
+		return aws.String(fmt.Sprintf(
+			"%s:%s",
+			aws.StringValue(imageName),
+			aws.StringValue(imageTag),
+		)), nil
 	}
 	return aws.String(fmt.Sprintf(
 		"%s/%s:%s",
