@@ -353,22 +353,6 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *Config, id 
 }
 
 func registerTaskDef(ctx context.Context, sess *session.Session, conf *Config, id string, image *string, role string) (*string, error) {
-	entrypoint := []*string{}
-	if conf.Entrypoint != nil && len(conf.Entrypoint) > 0 {
-		for _, cmds := range conf.Entrypoint {
-			for _, cmd := range strings.Split(aws.StringValue(cmds), ",") {
-				entrypoint = append(entrypoint, aws.String(cmd))
-			}
-		}
-	}
-	command := []*string{}
-	if conf.Commands != nil && len(conf.Commands) > 0 {
-		for _, cmds := range conf.Commands {
-			for _, cmd := range strings.Split(aws.StringValue(cmds), ",") {
-				command = append(command, aws.String(cmd))
-			}
-		}
-	}
 	environments := []*ecs.KeyValuePair{}
 	for key, val := range conf.Environments {
 		environments = append(environments, &ecs.KeyValuePair{
@@ -388,8 +372,8 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *Config, i
 			&ecs.ContainerDefinition{
 				Name:         aws.String("app"),
 				Image:        image,
-				EntryPoint:   entrypoint,
-				Command:      command,
+				EntryPoint:   conf.Entrypoint,
+				Command:      conf.Commands,
 				Environment:  environments,
 				DockerLabels: conf.Labels,
 				Essential:    aws.Bool(true),

@@ -43,6 +43,8 @@ DOCKER_IMAGE              | image, i        | Docker image to be run on ECS   | 
 FORCE_ECR                 | force_ecr, f    | True: you can use shortened name |         | false
 ENTRYPOINT                | entrypoint      | Override `ENTRYPOINT` of the image |       |
 COMMAND                   | command         | Override `CMD` of the image     |          |
+ENVIRONMENT               | environment     | Add `ENV` to the container      |          | 
+LABEL                     | label           | Add `LABEL` to the container    |          |  
 AWS_ACCESS_KEY_ID         | access_key, a   | AWS `access key` for API access | *        |
 AWS_SECRET_ACCESS_KEY     | secret_key, s   | AWS `secret key` for API access | *        |
 AWS_DEFAULT_REGION        | region, r       | AWS `region` for API access     |          | us-east-1

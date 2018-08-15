@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"syscall"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -62,6 +63,10 @@ func main() {
 		Envar("COMMAND").Strings()
 	subnets := run.Flag("subnets", "Subnets on where Fargate containers run.").
 		Envar("SUBNETS").Strings()
+	envs := run.Flag("environment", "Add `ENV` to the container.").
+		Envar("ENVIRONMENT").Strings()
+	labels := run.Flag("label", "Add `LABEL` to the container.").
+		Envar("LABEL").Strings()
 	securityGroups := run.Flag("security_groups", "SecurityGroups to be assigned to containers.").
 		Envar("SECURITY_GROUPS").Strings()
 	conf.CPU = run.Flag("cpu", "Requested vCPU to run Fargate containers.").
@@ -80,14 +85,38 @@ func main() {
 		conf.Image = aws.StringValue(image)
 		conf.Entrypoint = []*string{}
 		if entrypoints != nil {
-			for _, entrypoint := range *entrypoints {
-				conf.Entrypoint = append(conf.Entrypoint, aws.String(entrypoint))
+			for _, candidate := range *entrypoints {
+				for _, entrypoint := range strings.Split(candidate, ",") {
+					conf.Entrypoint = append(conf.Entrypoint, aws.String(entrypoint))
+				}
 			}
 		}
 		conf.Commands = []*string{}
 		if cmds != nil {
-			for _, cmd := range *cmds {
-				conf.Commands = append(conf.Commands, aws.String(cmd))
+			for _, candidate := range *cmds {
+				for _, cmd := range strings.Split(candidate, ",") {
+					conf.Commands = append(conf.Commands, aws.String(cmd))
+				}
+			}
+		}
+		conf.Environments = map[string]*string{}
+		if envs != nil {
+			for _, candidate := range *envs {
+				for _, env := range strings.Split(candidate, ",") {
+					if keyval := strings.Split(env, "="); len(keyval) >= 2 {
+						conf.Environments[keyval[0]] = aws.String(strings.Join(keyval[1:], "="))
+					}
+				}
+			}
+		}
+		conf.Labels = map[string]*string{}
+		if labels != nil {
+			for _, candidate := range *labels {
+				for _, label := range strings.Split(candidate, ",") {
+					if keyval := strings.Split(label, "="); len(keyval) >= 2 {
+						conf.Labels[keyval[0]] = aws.String(strings.Join(keyval[1:], "="))
+					}
+				}
 			}
 		}
 		conf.Subnets = []*string{}
