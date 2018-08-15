@@ -52,7 +52,8 @@ ECS_CLUSTER               | cluster, c      | Amazon ECS cluster name         | 
 SUBNETS                   | subnets         | Fargate's Subnets               |          |
 SECURITY_GROUPS           | security-groups | Fargate's SecurityGroups        |          |
 TASKDEF_FAMILY            | taskdef-family  | ECS Task Definition family name |          | ecs-task-runner
-TASK_ROLE                 | role            | ARN of an IAM Role for the task |          |
+TASK_ROLE                 | task-role-arn   | ARN of an IAM Role for the task |          |
+EXEC_ROLE_NAME            | exec-role-name  | Name of an execution role       |          | ecs-task-runner
 CPU                       | cpu             | Requested vCPU to run Fargate   |          | 256
 MEMORY                    | memory          | Requested memory to run Fargate |          | 512
 NUMBER                    | number, n       | Number of tasks                 |          | 1 

@@ -73,8 +73,10 @@ func main() {
 		Envar("CPU").Default("256").String()
 	conf.Memory = run.Flag("memory", "Requested memory to run Fargate containers.").
 		Envar("MEMORY").Default("512").String()
-	conf.TaskRoleArn = run.Flag("role", "ARN of an IAM Role for the task.").
-		Envar("TASK_ROLE").String()
+	conf.TaskRoleArn = run.Flag("task-role-arn", "ARN of an IAM Role for the task.").
+		Envar("TASK_ROLE_ARN").String()
+	conf.ExecRoleName = run.Flag("exec-role-name", "Name of an execution role for the task.").
+		Envar("EXEC_ROLE_NAME").Default("ecs-task-runner").String()
 	conf.NumberOfTasks = run.Flag("number", "Number of tasks.").
 		Short('n').Envar("NUMBER").Default("1").Int64()
 	conf.TaskTimeout = run.Flag("timeout", "Timeout minutes for the task.").
@@ -135,6 +137,7 @@ func main() {
 		}
 		conf.IsDebugMode = os.Getenv("APP_DEBUG") == "1"
 
+		// Cancel
 		ctx, cancel := context.WithCancel(context.Background())
 		c := make(chan os.Signal)
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -144,6 +147,8 @@ func main() {
 			commands.DeleteResouces(conf)
 			os.Exit(1)
 		}()
+
+		// Execute
 		exitCode, err := commands.Run(ctx, conf)
 		if err != nil {
 			if conf.IsDebugMode {

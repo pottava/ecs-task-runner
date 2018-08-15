@@ -42,6 +42,7 @@ type Config struct {
 	CPU            *string
 	Memory         *string
 	TaskRoleArn    *string
+	ExecRoleName   *string
 	NumberOfTasks  *int64
 	TaskTimeout    *int64
 	ExtendedOutput *bool
@@ -349,8 +350,14 @@ func createLogGroup(ctx context.Context, sess *session.Session, conf *Config, id
 }
 
 func createIAMRole(ctx context.Context, sess *session.Session, conf *Config, id string) (*string, error) {
+	role, err := iam.New(sess).GetRoleWithContext(ctx, &iam.GetRoleInput{
+		RoleName: conf.ExecRoleName,
+	})
+	if err == nil && role.Role != nil {
+		return role.Role.Arn, nil
+	}
 	out, err := iam.New(sess).CreateRoleWithContext(ctx, &iam.CreateRoleInput{
-		RoleName: aws.String(id),
+		RoleName: conf.ExecRoleName,
 		AssumeRolePolicyDocument: aws.String(`{
   "Statement": [{
     "Effect": "Allow",
@@ -366,7 +373,7 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *Config, id 
 		return nil, err
 	}
 	if _, err = iam.New(sess).AttachRolePolicyWithContext(ctx, &iam.AttachRolePolicyInput{
-		RoleName:  aws.String(id),
+		RoleName:  conf.ExecRoleName,
 		PolicyArn: aws.String(ecsExecutionPolicyArn),
 	}); err != nil {
 		return nil, err
@@ -521,17 +528,12 @@ func retrieveLogs(ctx context.Context, sess *session.Session, id string, tasks [
 func DeleteResouces(conf *Config) {
 	sess, _ := lib.Session(conf.AwsAccessKey, conf.AwsSecretKey, conf.AwsRegion, nil) // nolint
 	wg := sync.WaitGroup{}
-	wg.Add(4)
+	wg.Add(3)
 
 	// Delete the temporary task definition
 	go func() {
 		defer wg.Done()
 		deregisterTaskDef(sess, taskARN)
-	}()
-	// Delete the temporary IAM role
-	go func() {
-		defer wg.Done()
-		deleteIAMRole(sess, resourceID)
 	}()
 	// Delete the temporary log group
 	go func() {
@@ -549,16 +551,6 @@ func DeleteResouces(conf *Config) {
 func deregisterTaskDef(sess *session.Session, taskARN *string) {
 	ecs.New(sess).DeregisterTaskDefinition(&ecs.DeregisterTaskDefinitionInput{ // nolint
 		TaskDefinition: taskARN,
-	})
-}
-
-func deleteIAMRole(sess *session.Session, id string) {
-	iam.New(sess).DetachRolePolicy(&iam.DetachRolePolicyInput{ // nolint
-		RoleName:  aws.String(id),
-		PolicyArn: aws.String(ecsExecutionPolicyArn),
-	})
-	iam.New(sess).DeleteRole(&iam.DeleteRoleInput{ // nolint
-		RoleName: aws.String(id),
 	})
 }
 
