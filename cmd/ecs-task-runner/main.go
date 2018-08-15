@@ -79,6 +79,8 @@ func main() {
 		Short('n').Envar("NUMBER").Default("1").Int64()
 	conf.TaskTimeout = run.Flag("timeout", "Timeout minutes for the task.").
 		Short('t').Envar("TASK_TIMEOUT").Default("30").Int64()
+	conf.ExtendedOutput = run.Flag("extended-output", "If it's True, meta data returns as well.").
+		Envar("EXTENDED_OUTPUT").Default("false").Bool()
 
 	switch cli.MustParse(app.Parse(os.Args[1:])) {
 	case run.FullCommand():

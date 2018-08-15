@@ -57,6 +57,7 @@ CPU                       | cpu             | Requested vCPU to run Fargate   | 
 MEMORY                    | memory          | Requested memory to run Fargate |          | 512
 NUMBER                    | number, n       | Number of tasks                 |          | 1 
 TASK_TIMEOUT              | timeout, t      | Timeout minutes for the task    |          | 30
+EXTENDED_OUTPUT           | extended-output | True: meta data also returns    |          | false
 
 
 ## Samples

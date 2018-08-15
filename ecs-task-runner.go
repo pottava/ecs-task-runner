@@ -42,6 +42,7 @@ type Config struct {
 	TaskRoleArn    *string
 	NumberOfTasks  *int64
 	TaskTimeout    *int64
+	ExtendedOutput *bool
 	IsDebugMode    bool
 }
 
@@ -53,6 +54,7 @@ var (
 // Run runs the docker image on Amazon ECS
 func Run(ctx context.Context, conf *Config) (exitCode *int64, err error) {
 	resourceID = fmt.Sprintf("ecs-task-runner-%s", uuid.New().String())
+	startedAt := time.Now()
 
 	if conf.IsDebugMode {
 		lib.PrintJSON(conf)
@@ -79,19 +81,22 @@ func Run(ctx context.Context, conf *Config) (exitCode *int64, err error) {
 		return nil, err
 	}
 	// Create AWS resources
-	taskARN, _, err = createResouces(ctx, sess, conf, resourceID, image)
+	var taskdef *ecs.RegisterTaskDefinitionInput
+	taskARN, _, taskdef, err = createResouces(ctx, sess, conf, resourceID, image)
 	if err != nil {
 		DeleteResouces(conf)
 		return nil, err
 	}
 	// Run the ECS task
-	tasks, err := run(ctx, sess, conf, taskARN, resourceID)
+	tasks, runconfig, err := run(ctx, sess, conf, taskARN, resourceID)
 	if err != nil {
 		DeleteResouces(conf)
 		return nil, err
 	}
+	runTaskAt := time.Now()
+
 	// Wait for its done
-	exitCode, err = waitForTaskDone(ctx, sess, conf, tasks)
+	tasks, err = waitForTaskDone(ctx, sess, conf, tasks)
 	if err != nil {
 		DeleteResouces(conf)
 		return nil, err
@@ -103,22 +108,12 @@ func Run(ctx context.Context, conf *Config) (exitCode *int64, err error) {
 	DeleteResouces(conf)
 
 	// Format the result
-	result := map[string][]string{}
-	seq := 1
-	for _, value := range logs {
-		messages := []string{}
-		for _, event := range value {
-			messages = append(messages, fmt.Sprintf(
-				"%s: %s",
-				time.Unix(aws.Int64Value(event.Timestamp)/1000, 0).Format(time.RFC3339),
-				aws.StringValue(event.Message),
-			))
-		}
-		result[fmt.Sprintf("container-%d", seq)] = messages
-		seq++
+	outputResults(conf, startedAt, runTaskAt, logs, taskdef, runconfig, tasks)
+
+	if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
+		return aws.Int64(1), nil
 	}
-	lib.PrintJSON(result)
-	return exitCode, nil
+	return tasks[0].Containers[0].ExitCode, nil
 }
 
 func validateImageName(ctx context.Context, conf *Config, sess *session.Session, account string) (*string, error) {
@@ -301,22 +296,22 @@ const (
 	awsCWLogs             = "awslogs"
 )
 
-func createResouces(ctx context.Context, sess *session.Session, conf *Config, id string, image *string) (*string, *string, error) {
+func createResouces(ctx context.Context, sess *session.Session, conf *Config, id string, image *string) (*string, *string, *ecs.RegisterTaskDefinitionInput, error) {
 	// Make a temporary log group
 	if err := createLogGroup(ctx, sess, conf, id); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Make a temporary IAM role
 	role, err := createIAMRole(ctx, sess, conf, id)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Make a temporary task definition
-	task, err := registerTaskDef(ctx, sess, conf, id, image, aws.StringValue(role))
+	task, taskdef, err := registerTaskDef(ctx, sess, conf, id, image, aws.StringValue(role))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return task, role, nil
+	return task, role, taskdef, nil
 }
 
 func createLogGroup(ctx context.Context, sess *session.Session, conf *Config, id string) error {
@@ -352,7 +347,7 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *Config, id 
 	return out.Role.Arn, nil
 }
 
-func registerTaskDef(ctx context.Context, sess *session.Session, conf *Config, id string, image *string, role string) (*string, error) {
+func registerTaskDef(ctx context.Context, sess *session.Session, conf *Config, id string, image *string, role string) (*string, *ecs.RegisterTaskDefinitionInput, error) {
 	environments := []*ecs.KeyValuePair{}
 	for key, val := range conf.Environments {
 		environments = append(environments, &ecs.KeyValuePair{
@@ -393,12 +388,12 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *Config, i
 	}
 	out, err := ecs.New(sess).RegisterTaskDefinitionWithContext(ctx, &input)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return out.TaskDefinition.TaskDefinitionArn, nil
+	return out.TaskDefinition.TaskDefinitionArn, &input, nil
 }
 
-func run(ctx context.Context, sess *session.Session, conf *Config, taskARN *string, id string) ([]*ecs.Task, error) {
+func run(ctx context.Context, sess *session.Session, conf *Config, taskARN *string, id string) ([]*ecs.Task, *ecs.RunTaskInput, error) {
 	input := ecs.RunTaskInput{
 		Cluster:        conf.EcsCluster,
 		LaunchType:     aws.String(fargate),
@@ -422,23 +417,23 @@ func run(ctx context.Context, sess *session.Session, conf *Config, taskARN *stri
 		var err error
 		select {
 		case <-timeout:
-			return nil, errors.New("The execute role for this task was not in Active in 30sec")
+			return nil, nil, errors.New("The execute role for this task was not in Active in 30sec")
 		default:
 			var out *ecs.RunTaskOutput
 			out, err = ecs.New(sess).RunTaskWithContext(ctx, &input)
 			if err == nil {
-				return out.Tasks, nil
+				return out.Tasks, &input, nil
 			}
 			if ae, ok := err.(awserr.Error); ok && strings.EqualFold(ae.Code(), ecs.ErrCodeClientException) {
 				time.Sleep(1 * time.Second)
 				continue
 			}
-			return nil, err
+			return nil, nil, err
 		}
 	}
 }
 
-func waitForTaskDone(ctx context.Context, sess *session.Session, conf *Config, tasks []*ecs.Task) (*int64, error) {
+func waitForTaskDone(ctx context.Context, sess *session.Session, conf *Config, tasks []*ecs.Task) ([]*ecs.Task, error) {
 	timeout := time.After(time.Duration(aws.Int64Value(conf.TaskTimeout)) * time.Minute)
 	taskARNs := []*string{}
 	for _, task := range tasks {
@@ -465,10 +460,7 @@ func waitForTaskDone(ctx context.Context, sess *session.Session, conf *Config, t
 					if conf.IsDebugMode {
 						lib.PrintJSON(tasks.Tasks)
 					}
-					if len(tasks.Tasks) > 0 && len(tasks.Tasks[0].Containers) > 0 {
-						return tasks.Tasks[0].Containers[0].ExitCode, nil
-					}
-					return aws.Int64(-1), nil
+					return tasks.Tasks, nil
 				}
 			}
 			time.Sleep(5 * time.Second)
@@ -492,7 +484,7 @@ func retrieveLogs(ctx context.Context, sess *session.Session, id string, tasks [
 			LogStreamName: aws.String(fmt.Sprintf("fargate/app/%s", taskID)),
 		})
 		if err == nil {
-			result[taskID] = out.Events
+			result[aws.StringValue(task.TaskArn)] = out.Events
 		}
 	}
 	return result
@@ -541,4 +533,49 @@ func deleteECSCluster(sess *session.Session, id string) {
 	ecs.New(sess).DeleteCluster(&ecs.DeleteClusterInput{ // nolint
 		Cluster: aws.String(id),
 	})
+}
+
+func outputResults(conf *Config, startedAt, runTaskAt time.Time, logs map[string][]*cw.OutputLogEvent, taskdef *ecs.RegisterTaskDefinitionInput, runconfig *ecs.RunTaskInput, tasks []*ecs.Task) {
+	result := map[string]interface{}{}
+	seq := 1
+	for _, value := range logs {
+		messages := []string{}
+		for _, event := range value {
+			messages = append(messages, fmt.Sprintf(
+				"%s: %s",
+				time.Unix(aws.Int64Value(event.Timestamp)/1000, 0).Format(time.RFC3339),
+				aws.StringValue(event.Message),
+			))
+		}
+		result[fmt.Sprintf("container-%d", seq)] = messages
+		seq++
+	}
+	if aws.BoolValue(conf.ExtendedOutput) {
+		timeline := map[string]string{}
+		if len(tasks) > 0 {
+			timeline["1"] = fmt.Sprintf("AppStartedAt:              %s", rfc3339(startedAt))
+			timeline["2"] = fmt.Sprintf("AppRunFargateAt:           %s", rfc3339(runTaskAt))
+			timeline["3"] = fmt.Sprintf("FargateCreatedAt:          %s", toStr(tasks[0].CreatedAt))
+			timeline["4"] = fmt.Sprintf("FargatePullStartedAt:      %s", toStr(tasks[0].PullStartedAt))
+			timeline["5"] = fmt.Sprintf("FargatePullStoppedAt:      %s", toStr(tasks[0].PullStoppedAt))
+			timeline["6"] = fmt.Sprintf("FargateStartedAt:          %s", toStr(tasks[0].StartedAt))
+			timeline["7"] = fmt.Sprintf("FargateExecutionStoppedAt: %s", toStr(tasks[0].ExecutionStoppedAt))
+			timeline["8"] = fmt.Sprintf("FargateStoppedAt:          %s", toStr(tasks[0].StoppedAt))
+			timeline["9"] = fmt.Sprintf("AppFinishedAt:             %s", rfc3339(time.Now()))
+		}
+		result["meta"] = map[string]interface{}{
+			"timeline":  timeline,
+			"taskdef":   taskdef,
+			"runconfig": runconfig,
+		}
+	}
+	lib.PrintJSON(result)
+}
+
+func toStr(t *time.Time) string {
+	return rfc3339(aws.TimeValue(t))
+}
+
+func rfc3339(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
 }
