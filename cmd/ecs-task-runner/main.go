@@ -40,9 +40,9 @@ func main() {
 	}
 	// global flags
 	conf := &commands.Config{}
-	conf.AwsAccessKey = app.Flag("access_key", "AWS access key ID.").
+	conf.AwsAccessKey = app.Flag("access-key", "AWS access key ID.").
 		Short('a').Envar("AWS_ACCESS_KEY_ID").Required().String()
-	conf.AwsSecretKey = app.Flag("secret_key", "AWS secret access key.").
+	conf.AwsSecretKey = app.Flag("secret-key", "AWS secret access key.").
 		Short('s').Envar("AWS_SECRET_ACCESS_KEY").Required().String()
 	conf.AwsRegion = app.Flag("region", "AWS region.").
 		Short('r').Envar("AWS_DEFAULT_REGION").Default("us-east-1").String()
@@ -53,9 +53,9 @@ func main() {
 		Short('c').Envar("ECS_CLUSTER").String()
 	image := run.Flag("image", "Docker image name to be executed on ECS.").
 		Short('i').Envar("DOCKER_IMAGE").Required().String()
-	conf.ForceECR = run.Flag("force_ecr", "If it's True, you can use the shortened image name.").
+	conf.ForceECR = run.Flag("force-ecr", "If it's True, you can use the shortened image name.").
 		Short('f').Envar("FORCE_ECR").Default("false").Bool()
-	conf.TaskDefFamily = run.Flag("taskdef_family", "ECS Task Definition family name.").
+	conf.TaskDefFamily = run.Flag("taskdef-family", "ECS Task Definition family name.").
 		Envar("TASKDEF_FAMILY").Default("ecs-task-runner").String()
 	entrypoints := run.Flag("entrypoint", "Override `ENTRYPOINT` of the image.").
 		Envar("ENTRYPOINT").Strings()
@@ -64,10 +64,10 @@ func main() {
 	subnets := run.Flag("subnets", "Subnets on where Fargate containers run.").
 		Envar("SUBNETS").Strings()
 	envs := run.Flag("environment", "Add `ENV` to the container.").
-		Envar("ENVIRONMENT").Strings()
+		Short('e').Envar("ENVIRONMENT").Strings()
 	labels := run.Flag("label", "Add `LABEL` to the container.").
-		Envar("LABEL").Strings()
-	securityGroups := run.Flag("security_groups", "SecurityGroups to be assigned to containers.").
+		Short('l').Envar("LABEL").Strings()
+	securityGroups := run.Flag("security-groups", "SecurityGroups to be assigned to containers.").
 		Envar("SECURITY_GROUPS").Strings()
 	conf.CPU = run.Flag("cpu", "Requested vCPU to run Fargate containers.").
 		Envar("CPU").Default("256").String()

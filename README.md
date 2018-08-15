@@ -40,18 +40,18 @@ $ docker pull pottava/ecs-task-runner:1
 Environment Variables     | Argument        | Description                     | Required | Default 
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
 DOCKER_IMAGE              | image, i        | Docker image to be run on ECS   | *        |
-FORCE_ECR                 | force_ecr, f    | True: you can use shortened name |         | false
+FORCE_ECR                 | force-ecr, f    | True: you can use shortened name |         | false
 ENTRYPOINT                | entrypoint      | Override `ENTRYPOINT` of the image |       |
 COMMAND                   | command         | Override `CMD` of the image     |          |
-ENVIRONMENT               | environment     | Add `ENV` to the container      |          | 
-LABEL                     | label           | Add `LABEL` to the container    |          |  
-AWS_ACCESS_KEY_ID         | access_key, a   | AWS `access key` for API access | *        |
-AWS_SECRET_ACCESS_KEY     | secret_key, s   | AWS `secret key` for API access | *        |
+ENVIRONMENT               | environment, e  | Add `ENV` to the container      |          | 
+LABEL                     | label, l        | Add `LABEL` to the container    |          |  
+AWS_ACCESS_KEY_ID         | access-key, a   | AWS `access key` for API access | *        |
+AWS_SECRET_ACCESS_KEY     | secret-key, s   | AWS `secret key` for API access | *        |
 AWS_DEFAULT_REGION        | region, r       | AWS `region` for API access     |          | us-east-1
 ECS_CLUSTER               | cluster, c      | Amazon ECS cluster name         |          | 
 SUBNETS                   | subnets         | Fargate's Subnets               |          |
-SECURITY_GROUPS           | security_groups | Fargate's SecurityGroups        |          |
-TASKDEF_FAMILY            | taskdef_family  | ECS Task Definition family name |          | ecs-task-runner
+SECURITY_GROUPS           | security-groups | Fargate's SecurityGroups        |          |
+TASKDEF_FAMILY            | taskdef-family  | ECS Task Definition family name |          | ecs-task-runner
 TASK_ROLE                 | role            | ARN of an IAM Role for the task |          |
 CPU                       | cpu             | Requested vCPU to run Fargate   |          | 256
 MEMORY                    | memory          | Requested memory to run Fargate |          | 512
