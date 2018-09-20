@@ -4,7 +4,7 @@
     "ineffassign",
     "misspell",
     "nakedret",
-    "gas",
+    "gosec",
     "golint",
     "goconst",
     "unused",
