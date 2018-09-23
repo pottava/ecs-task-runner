@@ -876,8 +876,10 @@ func retrievePublicIP(ctx context.Context, conf *AwsConfig, task *ecs.Task, debu
 		NetworkInterfaceIds: []*string{eniID},
 	}
 	eni, err := ec2.New(sess).DescribeNetworkInterfacesWithContext(ctx, input)
-	if err != nil && debug {
-		lib.PrintJSON(err)
+	if err != nil {
+		if debug {
+			lib.PrintJSON(err)
+		}
 		return ""
 	}
 	if len(eni.NetworkInterfaces) <= 0 {

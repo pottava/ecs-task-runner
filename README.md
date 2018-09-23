@@ -19,10 +19,16 @@ This is a synchronous task runner for AWS Fargate. It runs a docker container on
 
 ## Installation
 
-curl:
+curl (macOS):
 
 ```
 $ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.0/ecs-task-runner_darwin_amd64 && chmod +x ecs-task-runner
+```
+
+curl (Linux):
+
+```
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.0/ecs-task-runner_linux_amd64 && chmod +x ecs-task-runner
 ```
 
 go:
@@ -51,7 +57,7 @@ ECS_CLUSTER               | cluster, c      | Amazon ECS cluster name         | 
 TASK_TIMEOUT              | timeout, t      | Timeout minutes for the task    |          | 30
 EXTENDED_OUTPUT           | extended-output | True: meta data also returns    |          | false
 
-for the run command:
+for the `run` command:
 
 Environment Variables     | Argument        | Description                     | Required | Default 
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
@@ -73,7 +79,7 @@ NUMBER                    | number, n       | Number of tasks                 | 
 ASSIGN_PUBLIC_IP          | assign-pub-ip   | True: Assigns public IP         |          | true
 ASYNC                     | async           | True: Does not wait for the job done |     | false
 
-for the stop command:
+for the `stop` command:
 
 Environment Variables     | Argument        | Description                     | Required | Default 
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
