@@ -706,7 +706,7 @@ func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt
 
 	if aws.BoolValue(conf.Asynchronous) { // Async mode
 		result["RequestID"] = requestID
-		if tasks != nil && len(tasks) > 0 {
+		if len(tasks) > 0 {
 			resources := []map[string]string{}
 			for _, task := range tasks {
 				resource := map[string]string{}
@@ -734,7 +734,7 @@ func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt
 	if aws.BoolValue(conf.Common.ExtendedOutput) {
 		timelines := []map[string]string{}
 		resources := []map[string]interface{}{}
-		if tasks != nil && len(tasks) > 0 {
+		if len(tasks) > 0 {
 			for _, task := range tasks {
 				resource := map[string]interface{}{}
 				container := taskdef.ContainerDefinitions[0]
@@ -802,7 +802,7 @@ func outputStopResults(ctx context.Context, conf *StopConfig, logs map[string][]
 	if aws.BoolValue(conf.Common.ExtendedOutput) {
 		timelines := []map[string]string{}
 		resources := []map[string]interface{}{}
-		if tasks != nil && len(tasks) > 0 {
+		if len(tasks) > 0 {
 			for _, task := range tasks {
 				resource := map[string]interface{}{}
 				resource["ClusterArn"] = aws.StringValue(task.ClusterArn)
