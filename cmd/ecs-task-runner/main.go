@@ -17,7 +17,7 @@ import (
 
 // for compile flags
 var (
-	version = "1.2.x"
+	version = "1.3.x"
 	commit  string
 	date    string
 )
@@ -39,23 +39,33 @@ func main() {
 		app.Version(version)
 	}
 	// global flags
-	conf := &commands.Config{}
-	conf.AwsAccessKey = app.Flag("access-key", "AWS access key ID.").
+	awsconf := &commands.AwsConfig{}
+	awsconf.AccessKey = app.Flag("access-key", "AWS access key ID.").
 		Short('a').Envar("AWS_ACCESS_KEY_ID").Required().String()
-	conf.AwsSecretKey = app.Flag("secret-key", "AWS secret access key.").
+	awsconf.SecretKey = app.Flag("secret-key", "AWS secret access key.").
 		Short('s').Envar("AWS_SECRET_ACCESS_KEY").Required().String()
-	conf.AwsRegion = app.Flag("region", "AWS region.").
+	awsconf.Region = app.Flag("region", "AWS region.").
 		Short('r').Envar("AWS_DEFAULT_REGION").Default("us-east-1").String()
 
-	// commands
-	run := app.Command("run", "Run a docker image as a Fargate on ECS cluster.")
-	conf.EcsCluster = run.Flag("cluster", "Amazon ECS cluster name.").
+	common := &commands.CommonConfig{}
+	common.EcsCluster = app.Flag("cluster", "Amazon ECS cluster name.").
 		Short('c').Envar("ECS_CLUSTER").String()
-	image := run.Flag("image", "Docker image name to be executed on ECS.").
-		Short('i').Envar("DOCKER_IMAGE").Required().String()
-	conf.ForceECR = run.Flag("force-ecr", "If it's True, you can use the shortened image name.").
+	common.Timeout = app.Flag("timeout", "Timeout minutes for the task.").
+		Short('t').Envar("TASK_TIMEOUT").Default("30").Int64()
+	common.ExtendedOutput = app.Flag("extended-output", "If it's True, meta data returns as well.").
+		Envar("EXTENDED_OUTPUT").Default("false").Bool()
+	common.IsDebugMode = os.Getenv("APP_DEBUG") == "1"
+
+	// commands
+	runconf := &commands.RunConfig{}
+	runconf.Aws = awsconf
+	runconf.Common = common
+	run := app.Command("run", "Run a docker image as a Fargate container on ECS cluster.")
+	image := run.Arg("image", "Docker image name to be executed on ECS.").
+		Envar("DOCKER_IMAGE").Required().String()
+	runconf.ForceECR = run.Flag("force-ecr", "If it's True, you can use the shortened image name.").
 		Short('f').Envar("FORCE_ECR").Default("false").Bool()
-	conf.TaskDefFamily = run.Flag("taskdef-family", "ECS Task Definition family name.").
+	runconf.TaskDefFamily = run.Flag("taskdef-family", "ECS Task Definition family name.").
 		Envar("TASKDEF_FAMILY").Default("ecs-task-runner").String()
 	entrypoints := run.Flag("entrypoint", "Override `ENTRYPOINT` of the image.").
 		Envar("ENTRYPOINT").Strings()
@@ -63,79 +73,95 @@ func main() {
 		Envar("COMMAND").Strings()
 	subnets := run.Flag("subnets", "Subnets on where Fargate containers run.").
 		Envar("SUBNETS").Strings()
+	ports := run.Flag("port", "Publish ports.").
+		Short('p').Envar("PORT").Int64List()
 	envs := run.Flag("environment", "Add `ENV` to the container.").
 		Short('e').Envar("ENVIRONMENT").Strings()
 	labels := run.Flag("label", "Add `LABEL` to the container.").
 		Short('l').Envar("LABEL").Strings()
 	securityGroups := run.Flag("security-groups", "SecurityGroups to be assigned to containers.").
 		Envar("SECURITY_GROUPS").Strings()
-	conf.CPU = run.Flag("cpu", "Requested vCPU to run Fargate containers.").
+	runconf.CPU = run.Flag("cpu", "Requested vCPU to run Fargate containers.").
 		Envar("CPU").Default("256").String()
-	conf.Memory = run.Flag("memory", "Requested memory to run Fargate containers.").
+	runconf.Memory = run.Flag("memory", "Requested memory to run Fargate containers.").
 		Envar("MEMORY").Default("512").String()
-	conf.TaskRoleArn = run.Flag("task-role-arn", "ARN of an IAM Role for the task.").
+	runconf.TaskRoleArn = run.Flag("task-role-arn", "ARN of an IAM Role for the task.").
 		Envar("TASK_ROLE_ARN").String()
-	conf.ExecRoleName = run.Flag("exec-role-name", "Name of an execution role for the task.").
+	runconf.ExecRoleName = run.Flag("exec-role-name", "Name of an execution role for the task.").
 		Envar("EXEC_ROLE_NAME").Default("ecs-task-runner").String()
-	conf.NumberOfTasks = run.Flag("number", "Number of tasks.").
+	runconf.NumberOfTasks = run.Flag("number", "Number of tasks.").
 		Short('n').Envar("NUMBER").Default("1").Int64()
-	conf.TaskTimeout = run.Flag("timeout", "Timeout minutes for the task.").
-		Short('t').Envar("TASK_TIMEOUT").Default("30").Int64()
-	conf.ExtendedOutput = run.Flag("extended-output", "If it's True, meta data returns as well.").
-		Envar("EXTENDED_OUTPUT").Default("false").Bool()
+	runconf.AssignPublicIP = run.Flag("assign-pub-ip", "If it's True, it assigns public IP.").
+		Envar("ASSIGN_PUBLIC_IP").Default("true").Bool()
+	runconf.Asynchronous = run.Flag("async", "If it's True, the app does not wait for the job done.").
+		Envar("ASYNC").Default("false").Bool()
+
+	stopconf := &commands.StopConfig{}
+	stopconf.Aws = awsconf
+	stopconf.Common = common
+	stop := app.Command("stop", "Stop a Fargate on ECS cluster.")
+	stopconf.RequestID = stop.Arg("request-id", "Request ID.").
+		Envar("REQUEST_ID").Required().String()
+	taskARNs := stop.Flag("task-arn", "ECS Task ARN.").
+		Envar("TASK_ARN").Strings()
 
 	switch cli.MustParse(app.Parse(os.Args[1:])) {
 	case run.FullCommand():
-		conf.Image = aws.StringValue(image)
-		conf.Entrypoint = []*string{}
+		runconf.Image = aws.StringValue(image)
+		runconf.Entrypoint = []*string{}
 		if entrypoints != nil {
 			for _, candidate := range *entrypoints {
 				for _, entrypoint := range strings.Split(candidate, ",") {
-					conf.Entrypoint = append(conf.Entrypoint, aws.String(entrypoint))
+					runconf.Entrypoint = append(runconf.Entrypoint, aws.String(entrypoint))
 				}
 			}
 		}
-		conf.Commands = []*string{}
+		runconf.Commands = []*string{}
 		if cmds != nil {
 			for _, candidate := range *cmds {
 				for _, cmd := range strings.Split(candidate, ",") {
-					conf.Commands = append(conf.Commands, aws.String(cmd))
+					runconf.Commands = append(runconf.Commands, aws.String(cmd))
 				}
 			}
 		}
-		conf.Environments = map[string]*string{}
+		runconf.Ports = []*int64{}
+		if envs != nil {
+			for _, candidate := range *ports {
+				runconf.Ports = append(runconf.Ports, aws.Int64(candidate))
+			}
+		}
+		runconf.Environments = map[string]*string{}
 		if envs != nil {
 			for _, candidate := range *envs {
 				for _, env := range strings.Split(candidate, ",") {
 					if keyval := strings.Split(env, "="); len(keyval) >= 2 {
-						conf.Environments[keyval[0]] = aws.String(strings.Join(keyval[1:], "="))
+						runconf.Environments[keyval[0]] = aws.String(strings.Join(keyval[1:], "="))
 					}
 				}
 			}
 		}
-		conf.Labels = map[string]*string{}
+		runconf.Labels = map[string]*string{}
 		if labels != nil {
 			for _, candidate := range *labels {
 				for _, label := range strings.Split(candidate, ",") {
 					if keyval := strings.Split(label, "="); len(keyval) >= 2 {
-						conf.Labels[keyval[0]] = aws.String(strings.Join(keyval[1:], "="))
+						runconf.Labels[keyval[0]] = aws.String(strings.Join(keyval[1:], "="))
 					}
 				}
 			}
 		}
-		conf.Subnets = []*string{}
+		runconf.Subnets = []*string{}
 		if subnets != nil {
 			for _, subnet := range *subnets {
-				conf.Subnets = append(conf.Subnets, aws.String(subnet))
+				runconf.Subnets = append(runconf.Subnets, aws.String(subnet))
 			}
 		}
-		conf.SecurityGroups = []*string{}
+		runconf.SecurityGroups = []*string{}
 		if securityGroups != nil {
 			for _, securityGroup := range *securityGroups {
-				conf.SecurityGroups = append(conf.SecurityGroups, aws.String(securityGroup))
+				runconf.SecurityGroups = append(runconf.SecurityGroups, aws.String(securityGroup))
 			}
 		}
-		conf.IsDebugMode = os.Getenv("APP_DEBUG") == "1"
 
 		// Cancel
 		ctx, cancel := context.WithCancel(context.Background())
@@ -144,12 +170,38 @@ func main() {
 		go func() {
 			<-c
 			cancel()
-			commands.DeleteResouces(conf)
+			commands.DeleteResouces(runconf.Aws, runconf.Common)
 			os.Exit(1)
 		}()
 
 		// Execute
-		exitCode, err := commands.Run(ctx, conf)
+		exitCode, err := commands.Run(ctx, runconf)
+		if err != nil {
+			log.Errors.Fatal(err)
+			return
+		}
+		os.Exit(int(aws.Int64Value(exitCode)))
+
+	case stop.FullCommand():
+		stopconf.TaskARNs = []*string{}
+		if taskARNs != nil {
+			for _, taskARN := range *taskARNs {
+				stopconf.TaskARNs = append(stopconf.TaskARNs, aws.String(taskARN))
+			}
+		}
+
+		// Cancel
+		ctx, cancel := context.WithCancel(context.Background())
+		c := make(chan os.Signal)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-c
+			cancel()
+			os.Exit(1)
+		}()
+
+		// Execute
+		exitCode, err := commands.Stop(ctx, stopconf)
 		if err != nil {
 			log.Errors.Fatal(err)
 			return
