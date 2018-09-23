@@ -15,6 +15,7 @@ jobs:
             gometalinter.v2 --install
             gometalinter.v2 --config=lint-config.json ./...
             go test -cover -bench -benchmem `go list ./...`
+      - run: go run cmd/ecs-task-runner/main.go run -i alpine --entrypoint env
   build:
     working_directory: /go/src/github.com/pottava/ecs-task-runner
     docker:
@@ -29,7 +30,7 @@ jobs:
           name: Build and release
           command: |
             cd cmd/ecs-task-runner/
-            gox --osarch "linux/amd64 darwin/amd64 windows/amd64" -ldflags "-s -w -X main.date=$(date +%Y-%m-%d --utc) -X main.version=${CIRCLE_TAG} -X main.commit=${CIRCLE_SHA1}" -output "${GOPATH}/pkg/${CIRCLE_PROJECT_REPONAME}_{{.OS}}_{{.Arch}}"
+            gox --osarch "linux/amd64 darwin/amd64 windows/amd64" -ldflags "-s -w -X main.date=$(date +%Y-%m-%d --utc) -X main.version=${CIRCLE_TAG} -X main.commit=${CIRCLE_SHA1:0:7}" -output "${GOPATH}/pkg/${CIRCLE_PROJECT_REPONAME}_{{.OS}}_{{.Arch}}"
             ghr -t $GITHUB_TOKEN -u $CIRCLE_PROJECT_USERNAME -r $CIRCLE_PROJECT_REPONAME --replace ${CIRCLE_TAG} $GOPATH/pkg/
 
 workflows:
