@@ -40,19 +40,28 @@ $ docker pull pottava/ecs-task-runner
 
 ## Parameters
 
+Common parameters:
+
 Environment Variables     | Argument        | Description                     | Required | Default 
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
-DOCKER_IMAGE              | image, i        | Docker image to be run on ECS   | *        |
+AWS_ACCESS_KEY_ID         | access-key, a   | AWS `access key` for API access | *        |
+AWS_SECRET_ACCESS_KEY     | secret-key, s   | AWS `secret key` for API access | *        |
+AWS_DEFAULT_REGION        | region, r       | AWS `region` for API access     |          | us-east-1
+ECS_CLUSTER               | cluster, c      | Amazon ECS cluster name         |          |
+TASK_TIMEOUT              | timeout, t      | Timeout minutes for the task    |          | 30
+EXTENDED_OUTPUT           | extended-output | True: meta data also returns    |          | false
+
+for the run command:
+
+Environment Variables     | Argument        | Description                     | Required | Default 
+------------------------- | --------------- | ------------------------------- | -------- | ---------
+DOCKER_IMAGE              |                 | Docker image to be run on ECS   | *        |
 FORCE_ECR                 | force-ecr, f    | True: you can use shortened name |         | false
 ENTRYPOINT                | entrypoint      | Override `ENTRYPOINT` of the image |       |
 COMMAND                   | command         | Override `CMD` of the image     |          |
 PORT                      | port            | Publish ports                   |          | 
 ENVIRONMENT               | environment, e  | Add `ENV` to the container      |          | 
 LABEL                     | label, l        | Add `LABEL` to the container    |          |  
-AWS_ACCESS_KEY_ID         | access-key, a   | AWS `access key` for API access | *        |
-AWS_SECRET_ACCESS_KEY     | secret-key, s   | AWS `secret key` for API access | *        |
-AWS_DEFAULT_REGION        | region, r       | AWS `region` for API access     |          | us-east-1
-ECS_CLUSTER               | cluster, c      | Amazon ECS cluster name         |          | 
 SUBNETS                   | subnets         | Fargate's Subnets               |          |
 SECURITY_GROUPS           | security-groups | Fargate's SecurityGroups        |          |
 TASKDEF_FAMILY            | taskdef-family  | ECS Task Definition family name |          | ecs-task-runner
@@ -62,9 +71,14 @@ CPU                       | cpu             | Requested vCPU to run Fargate   | 
 MEMORY                    | memory          | Requested memory to run Fargate |          | 512
 NUMBER                    | number, n       | Number of tasks                 |          | 1 
 ASSIGN_PUBLIC_IP          | assign-pub-ip   | True: Assigns public IP         |          | true
-TASK_TIMEOUT              | timeout, t      | Timeout minutes for the task    |          | 30
 ASYNC                     | async           | True: Does not wait for the job done |     | false
-EXTENDED_OUTPUT           | extended-output | True: meta data also returns    |          | false
+
+for the stop command:
+
+Environment Variables     | Argument        | Description                     | Required | Default 
+------------------------- | --------------- | ------------------------------- | -------- | ---------
+REQUEST_ID                |                 | Resources ID to be stopped      | *        | 
+TASK_ARN                  | task-arn        | Task ARNs to be stopped         |          |
 
 
 ## Samples

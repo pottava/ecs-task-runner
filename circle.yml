@@ -15,7 +15,7 @@ jobs:
             gometalinter.v2 --install
             gometalinter.v2 --config=lint-config.json ./...
             go test -cover -bench -benchmem `go list ./...`
-      - run: go run cmd/ecs-task-runner/main.go run alpine --entrypoint env
+      - run: go run cmd/ecs-task-runner/main.go run alpine --entrypoint env --extended-output
   build:
     working_directory: /go/src/github.com/pottava/ecs-task-runner
     docker:
