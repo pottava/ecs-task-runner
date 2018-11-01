@@ -261,13 +261,13 @@ func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Sessi
 	}
 	if aws.StringValue(imageHost) == "" {
 		return aws.String(fmt.Sprintf(
-			"%s:%s",
+			"%s%s",
 			aws.StringValue(imageName),
 			aws.StringValue(imageTag),
 		)), nil
 	}
 	return aws.String(fmt.Sprintf(
-		"%s/%s:%s",
+		"%s/%s%s",
 		aws.StringValue(imageHost),
 		aws.StringValue(imageName),
 		aws.StringValue(imageTag),
@@ -284,9 +284,15 @@ func parseImageName(value string) (*string, *string, *string, error) {
 	if candidate, ok := ref.(reference.Named); ok {
 		imageHost, imageName = reference.SplitHostname(candidate)
 	}
-	imageTag := "latest"
+	imageTag := ":latest"
 	if candidate, ok := ref.(reference.Tagged); ok {
-		imageTag = candidate.Tag()
+		imageTag = ":" + candidate.Tag()
+	}
+	if candidate, ok := ref.(reference.Digested); ok {
+		digest := candidate.Digest()
+		if digest.Validate() == nil {
+			imageTag = "@" + digest.String()
+		}
 	}
 	return aws.String(imageHost), aws.String(imageName), aws.String(imageTag), nil
 }

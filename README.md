@@ -5,9 +5,9 @@
 [![pottava/ecs-task-runner](http://dockeri.co/image/pottava/ecs-task-runner)](https://hub.docker.com/r/pottava/ecs-task-runner/)
 
 Supported tags and respective `Dockerfile` links:  
-・latest ([versions/2.0/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.0/Dockerfile))  
-・2.0 ([versions/2.0/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.0/Dockerfile))  
-・2 ([versions/2.0/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.0/Dockerfile))  
+・latest ([versions/2.1/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.1/Dockerfile))  
+・2.1 ([versions/2.1/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.1/Dockerfile))  
+・2 ([versions/2.1/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.1/Dockerfile))  
 ・1.2 ([versions/1.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/1.2/Dockerfile))  
 ・1 ([versions/1.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/1.2/Dockerfile))  
 
@@ -22,13 +22,13 @@ This is a synchronous task runner for AWS Fargate. It runs a docker container on
 curl (macOS):
 
 ```
-$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.0/ecs-task-runner_darwin_amd64 && chmod +x ecs-task-runner
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.1/ecs-task-runner_darwin_amd64 && chmod +x ecs-task-runner
 ```
 
 curl (Linux):
 
 ```
-$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.0/ecs-task-runner_linux_amd64 && chmod +x ecs-task-runner
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.1/ecs-task-runner_linux_amd64 && chmod +x ecs-task-runner
 ```
 
 go:
@@ -48,7 +48,7 @@ $ docker pull pottava/ecs-task-runner
 
 Common parameters:
 
-Environment Variables     | Argument        | Description                     | Required | Default 
+Environment Variables     | Argument        | Description                     | Required | Default
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
 AWS_ACCESS_KEY_ID         | access-key, a   | AWS `access key` for API access | *        |
 AWS_SECRET_ACCESS_KEY     | secret-key, s   | AWS `secret key` for API access | *        |
@@ -59,15 +59,15 @@ EXTENDED_OUTPUT           | extended-output | True: meta data also returns    | 
 
 for the `run` command:
 
-Environment Variables     | Argument        | Description                     | Required | Default 
+Environment Variables     | Argument        | Description                     | Required | Default
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
 DOCKER_IMAGE              |                 | Docker image to be run on ECS   | *        |
 FORCE_ECR                 | force-ecr, f    | True: you can use shortened name |         | false
 ENTRYPOINT                | entrypoint      | Override `ENTRYPOINT` of the image |       |
 COMMAND                   | command         | Override `CMD` of the image     |          |
-PORT                      | port            | Publish ports                   |          | 
-ENVIRONMENT               | environment, e  | Add `ENV` to the container      |          | 
-LABEL                     | label, l        | Add `LABEL` to the container    |          |  
+PORT                      | port            | Publish ports                   |          |
+ENVIRONMENT               | environment, e  | Add `ENV` to the container      |          |
+LABEL                     | label, l        | Add `LABEL` to the container    |          |
 SUBNETS                   | subnets         | Fargate's Subnets               |          |
 SECURITY_GROUPS           | security-groups | Fargate's SecurityGroups        |          |
 TASKDEF_FAMILY            | taskdef-family  | ECS Task Definition family name |          | ecs-task-runner
@@ -75,15 +75,15 @@ TASK_ROLE                 | task-role-arn   | ARN of an IAM Role for the task | 
 EXEC_ROLE_NAME            | exec-role-name  | Name of an execution role       |          | ecs-task-runner
 CPU                       | cpu             | Requested vCPU to run Fargate   |          | 256
 MEMORY                    | memory          | Requested memory to run Fargate |          | 512
-NUMBER                    | number, n       | Number of tasks                 |          | 1 
+NUMBER                    | number, n       | Number of tasks                 |          | 1
 ASSIGN_PUBLIC_IP          | assign-pub-ip   | True: Assigns public IP         |          | true
 ASYNC                     | async           | True: Does not wait for the job done |     | false
 
 for the `stop` command:
 
-Environment Variables     | Argument        | Description                     | Required | Default 
+Environment Variables     | Argument        | Description                     | Required | Default
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
-REQUEST_ID                |                 | Resources ID to be stopped      | *        | 
+REQUEST_ID                |                 | Resources ID to be stopped      | *        |
 TASK_ARN                  | task-arn        | Task ARNs to be stopped         |          |
 
 
