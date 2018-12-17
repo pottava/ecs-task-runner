@@ -9,9 +9,9 @@ import (
 
 // Session creaate a new AWS session
 func Session(awsAccessKey, awsSecretKey, awsRegion, endpoint *string) (*session.Session, error) {
-	level := aws.LogLevelType(aws.LogOff)
+	level := aws.LogOff
 	if os.Getenv("DEBUG") == "1" {
-		level = aws.LogLevelType(aws.LogDebug)
+		level = aws.LogDebug
 	}
 	if awsAccessKey != nil {
 		os.Setenv("AWS_ACCESS_KEY_ID", aws.StringValue(awsAccessKey)) // nolint

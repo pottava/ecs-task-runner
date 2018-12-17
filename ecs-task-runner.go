@@ -861,7 +861,7 @@ func rfc3339(t time.Time) string {
 }
 
 func retrievePublicIP(ctx context.Context, conf *AwsConfig, task *ecs.Task, debug bool) string {
-	if task == nil || len(task.Attachments) <= 0 {
+	if task == nil || len(task.Attachments) == 0 {
 		return ""
 	}
 	var eniID *string
@@ -888,7 +888,7 @@ func retrievePublicIP(ctx context.Context, conf *AwsConfig, task *ecs.Task, debu
 		}
 		return ""
 	}
-	if len(eni.NetworkInterfaces) <= 0 {
+	if len(eni.NetworkInterfaces) == 0 {
 		return ""
 	}
 	return aws.StringValue(eni.NetworkInterfaces[0].Association.PublicIp)
