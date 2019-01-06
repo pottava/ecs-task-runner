@@ -110,7 +110,7 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 		return exitWithError, err
 	}
 	// Retrieve app log
-	logs := lib.RetrieveLogs(ctx, sess, tasks, logGroup, logPrefix)
+	logs := lib.RetrieveLogs(ctx, sess, tasks, requestID, logGroup, logPrefix)
 	retrieveLogsAt := time.Now()
 
 	// Delete AWS resources
@@ -172,7 +172,7 @@ func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
 	tasks, _ = waitForTask(ctx, sess, conf.Common, tasks, func(task *ecs.Task) bool { // nolint
 		return task.ExecutionStoppedAt != nil
 	})
-	logs := lib.RetrieveLogs(ctx, sess, tasks, logGroup, logPrefix)
+	logs := lib.RetrieveLogs(ctx, sess, tasks, requestID, logGroup, logPrefix)
 	outputStopResults(ctx, conf, logs, tasks)
 
 	// Delete AWS resources
@@ -450,7 +450,7 @@ func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunCon
 		conf.Aws.accountID = aws.StringValue(account.Account)
 	}
 	if _, check := uuid.Parse(keyID); check == nil {
-		result = fmt.Sprintf(
+		return fmt.Sprintf(
 			kmsCustomKeyID,
 			aws.StringValue(conf.Aws.Region),
 			conf.Aws.accountID,
@@ -730,7 +730,7 @@ func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt
 				taskID := ""
 				matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
 				if len(matched) > 0 && len(matched[0]) > 1 {
-					taskID = matched[0][1]
+					taskID = strings.Replace(matched[0][1], requestID+"/", "", -1)
 				}
 				for _, container := range task.Containers {
 					containers = append(containers, map[string]interface{}{

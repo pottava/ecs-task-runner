@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -23,12 +24,12 @@ func CreateLogGroup(ctx context.Context, sess *session.Session, logGroup string)
 var regTaskID = regexp.MustCompile("task/(.*)")
 
 // RetrieveLogs retrieve containers' logs
-func RetrieveLogs(ctx context.Context, sess *session.Session, tasks []*ecs.Task, logGroupName, streamPrefix string) map[string][]*cw.OutputLogEvent {
+func RetrieveLogs(ctx context.Context, sess *session.Session, tasks []*ecs.Task, clusterName, logGroupName, streamPrefix string) map[string][]*cw.OutputLogEvent {
 	logs := map[string][]*cw.OutputLogEvent{}
 	for _, task := range tasks {
 		matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
 		if len(matched) > 0 && len(matched[0]) > 1 {
-			taskID := matched[0][1]
+			taskID := strings.Replace(matched[0][1], clusterName+"/", "", -1)
 			name := ""
 			if len(task.Containers) > 0 {
 				name = aws.StringValue(task.Containers[0].Name)
