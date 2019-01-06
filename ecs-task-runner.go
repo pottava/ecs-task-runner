@@ -123,6 +123,11 @@ func Run(ctx context.Context, conf *RunConfig) (output *Output, err error) {
 			output.ExitCode = container.ExitCode
 		}
 	}
+	for _, status := range output.Meta.ExitCodes {
+		if strings.Contains(status.StopCode, "Failed") {
+			output.ExitCode = exitWithError
+		}
+	}
 	return output, nil
 }
 
@@ -170,6 +175,22 @@ func Stop(ctx context.Context, conf *StopConfig) (output *Output, err error) {
 	// Delete AWS resources
 	if len(all.TaskArns) == len(tasks) {
 		deleteResoucesInTheEnd(conf.Aws, conf.Common)
+	}
+	if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
+		return &Output{ExitCode: exitWithError}, nil
+	}
+	for _, task := range tasks {
+		for _, container := range task.Containers {
+			if aws.Int64Value(output.ExitCode) != 0 {
+				break
+			}
+			output.ExitCode = container.ExitCode
+		}
+	}
+	for _, status := range output.Meta.ExitCodes {
+		if strings.Contains(status.StopCode, "Failed") {
+			output.ExitCode = exitWithError
+		}
 	}
 	return output, nil
 }

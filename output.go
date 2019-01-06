@@ -128,68 +128,68 @@ func runResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt time.
 			seq++
 		}
 	}
-	if aws.BoolValue(conf.Common.ExtendedOutput) {
-		timelines := []OutputTimelines{}
-		resources := []OutputResources{}
-		exitcodes := []OutputExitCodes{}
-		if len(tasks) > 0 {
-			for _, task := range tasks {
-				containers := []OutputContainerResources{}
-				taskID := ""
-				matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
-				if len(matched) > 0 && len(matched[0]) > 1 {
-					taskID = strings.Replace(matched[0][1], requestID+"/", "", -1)
-				}
-				for _, container := range task.Containers {
-					containers = append(containers, OutputContainerResources{
-						ContainerArn: aws.StringValue(container.ContainerArn),
-						LogStream:    fmt.Sprintf("fargate/%s/%s", aws.StringValue(container.Name), taskID),
-					})
-				}
-				container := taskdef.ContainerDefinitions[0]
-				resource := OutputResources{
-					ClusterArn:        aws.StringValue(task.ClusterArn),
-					TaskDefinitionArn: aws.StringValue(task.TaskDefinitionArn),
-					TaskArn:           aws.StringValue(task.TaskArn),
-					TaskRoleArn:       aws.StringValue(taskdef.TaskRoleArn),
-					LogGroup:          aws.StringValue(container.LogConfiguration.Options["awslogs-group"]),
-					PublicIP:          lib.RetrievePublicIP(ctx, conf.Aws.AccessKey, conf.Aws.SecretKey, conf.Aws.Region, task, conf.Common.IsDebugMode),
-					Containers:        containers,
-				}
-				resources = append(resources, resource)
-
-				timeline := OutputTimelines{
-					AppStartedAt:              fmt.Sprintf("AppStartedAt:              %s", rfc3339(startedAt)),
-					AppTriedToRunFargateAt:    fmt.Sprintf("AppTriedToRunFargateAt:    %s", rfc3339(runTaskAt)),
-					FargateCreatedAt:          fmt.Sprintf("FargateCreatedAt:          %s", toStr(task.CreatedAt)),
-					FargatePullStartedAt:      fmt.Sprintf("FargatePullStartedAt:      %s", toStr(task.PullStartedAt)),
-					FargatePullStoppedAt:      fmt.Sprintf("FargatePullStoppedAt:      %s", toStr(task.PullStoppedAt)),
-					FargateStartedAt:          fmt.Sprintf("FargateStartedAt:          %s", toStr(task.StartedAt)),
-					FargateExecutionStoppedAt: fmt.Sprintf("FargateExecutionStoppedAt: %s", toStr(task.ExecutionStoppedAt)),
-					FargateStoppedAt:          fmt.Sprintf("FargateStoppedAt:          %s", toStr(task.StoppedAt)),
-					AppRetrievedLogsAt:        fmt.Sprintf("AppRetrievedLogsAt:        %s", rfc3339(aws.TimeValue(logsAt))),
-					AppFinishedAt:             fmt.Sprintf("AppFinishedAt:             %s", rfc3339(time.Now())),
-				}
-				timelines = append(timelines, timeline)
-
-				exitcode := OutputExitCodes{
-					LastStatus:    aws.StringValue(task.LastStatus),
-					HealthStatus:  aws.StringValue(task.HealthStatus),
-					StopCode:      aws.StringValue(task.StopCode),
-					StoppedReason: aws.StringValue(task.StoppedReason),
-				}
-				containerExitCodes := []OutputContainerExitCodes{}
-				for _, container := range task.Containers {
-					containerExitCodes = append(containerExitCodes, OutputContainerExitCodes{
-						ExitCode:     aws.Int64Value(container.ExitCode),
-						Reason:       aws.StringValue(container.Reason),
-						LastStatus:   aws.StringValue(container.LastStatus),
-						HealthStatus: aws.StringValue(container.HealthStatus),
-					})
-				}
-				exitcode.Containers = containerExitCodes
-				exitcodes = append(exitcodes, exitcode)
+	timelines := []OutputTimelines{}
+	resources := []OutputResources{}
+	exitcodes := []OutputExitCodes{}
+	if len(tasks) > 0 {
+		for _, task := range tasks {
+			containers := []OutputContainerResources{}
+			taskID := ""
+			matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
+			if len(matched) > 0 && len(matched[0]) > 1 {
+				taskID = strings.Replace(matched[0][1], requestID+"/", "", -1)
 			}
+			for _, container := range task.Containers {
+				containers = append(containers, OutputContainerResources{
+					ContainerArn: aws.StringValue(container.ContainerArn),
+					LogStream:    fmt.Sprintf("fargate/%s/%s", aws.StringValue(container.Name), taskID),
+				})
+			}
+			container := taskdef.ContainerDefinitions[0]
+			resource := OutputResources{
+				ClusterArn:        aws.StringValue(task.ClusterArn),
+				TaskDefinitionArn: aws.StringValue(task.TaskDefinitionArn),
+				TaskArn:           aws.StringValue(task.TaskArn),
+				TaskRoleArn:       aws.StringValue(taskdef.TaskRoleArn),
+				LogGroup:          aws.StringValue(container.LogConfiguration.Options["awslogs-group"]),
+				Containers:        containers,
+			}
+			if aws.BoolValue(conf.Common.ExtendedOutput) {
+				resource.PublicIP = lib.RetrievePublicIP(ctx, conf.Aws.AccessKey, conf.Aws.SecretKey, conf.Aws.Region, task, conf.Common.IsDebugMode)
+			}
+			resources = append(resources, resource)
+
+			timeline := OutputTimelines{
+				AppStartedAt:              fmt.Sprintf("AppStartedAt:              %s", rfc3339(startedAt)),
+				AppTriedToRunFargateAt:    fmt.Sprintf("AppTriedToRunFargateAt:    %s", rfc3339(runTaskAt)),
+				FargateCreatedAt:          fmt.Sprintf("FargateCreatedAt:          %s", toStr(task.CreatedAt)),
+				FargatePullStartedAt:      fmt.Sprintf("FargatePullStartedAt:      %s", toStr(task.PullStartedAt)),
+				FargatePullStoppedAt:      fmt.Sprintf("FargatePullStoppedAt:      %s", toStr(task.PullStoppedAt)),
+				FargateStartedAt:          fmt.Sprintf("FargateStartedAt:          %s", toStr(task.StartedAt)),
+				FargateExecutionStoppedAt: fmt.Sprintf("FargateExecutionStoppedAt: %s", toStr(task.ExecutionStoppedAt)),
+				FargateStoppedAt:          fmt.Sprintf("FargateStoppedAt:          %s", toStr(task.StoppedAt)),
+				AppRetrievedLogsAt:        fmt.Sprintf("AppRetrievedLogsAt:        %s", rfc3339(aws.TimeValue(logsAt))),
+				AppFinishedAt:             fmt.Sprintf("AppFinishedAt:             %s", rfc3339(time.Now())),
+			}
+			timelines = append(timelines, timeline)
+
+			exitcode := OutputExitCodes{
+				LastStatus:    aws.StringValue(task.LastStatus),
+				HealthStatus:  aws.StringValue(task.HealthStatus),
+				StopCode:      aws.StringValue(task.StopCode),
+				StoppedReason: aws.StringValue(task.StoppedReason),
+			}
+			containerExitCodes := []OutputContainerExitCodes{}
+			for _, container := range task.Containers {
+				containerExitCodes = append(containerExitCodes, OutputContainerExitCodes{
+					ExitCode:     aws.Int64Value(container.ExitCode),
+					Reason:       aws.StringValue(container.Reason),
+					LastStatus:   aws.StringValue(container.LastStatus),
+					HealthStatus: aws.StringValue(container.HealthStatus),
+				})
+			}
+			exitcode.Containers = containerExitCodes
+			exitcodes = append(exitcodes, exitcode)
 		}
 		result.Meta = OutputMeta{
 			TaskDef:   taskdef,
@@ -218,61 +218,59 @@ func stopResults(ctx context.Context, conf *StopConfig, logs map[string][]*cw.Ou
 		result.SyncLogs[fmt.Sprintf("container-%d", seq)] = messages
 		seq++
 	}
-	if aws.BoolValue(conf.Common.ExtendedOutput) {
-		timelines := []OutputTimelines{}
-		resources := []OutputResources{}
-		exitcodes := []OutputExitCodes{}
-		if len(tasks) > 0 {
-			for _, task := range tasks {
-				containers := []OutputContainerResources{}
-				taskID := ""
-				matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
-				if len(matched) > 0 && len(matched[0]) > 1 {
-					taskID = strings.Replace(matched[0][1], requestID+"/", "", -1)
-				}
-				for _, container := range task.Containers {
-					containers = append(containers, OutputContainerResources{
-						ContainerArn: aws.StringValue(container.ContainerArn),
-						LogStream:    fmt.Sprintf("fargate/%s/%s", aws.StringValue(container.Name), taskID),
-					})
-				}
-				resource := OutputResources{
-					ClusterArn:        aws.StringValue(task.ClusterArn),
-					TaskDefinitionArn: aws.StringValue(task.TaskDefinitionArn),
-					TaskArn:           aws.StringValue(task.TaskArn),
-					Containers:        containers,
-				}
-				resources = append(resources, resource)
-
-				timeline := OutputTimelines{
-					FargateCreatedAt:          fmt.Sprintf("FargateCreatedAt:          %s", toStr(task.CreatedAt)),
-					FargatePullStartedAt:      fmt.Sprintf("FargatePullStartedAt:      %s", toStr(task.PullStartedAt)),
-					FargatePullStoppedAt:      fmt.Sprintf("FargatePullStoppedAt:      %s", toStr(task.PullStoppedAt)),
-					FargateStartedAt:          fmt.Sprintf("FargateStartedAt:          %s", toStr(task.StartedAt)),
-					FargateExecutionStoppedAt: fmt.Sprintf("FargateExecutionStoppedAt: %s", toStr(task.ExecutionStoppedAt)),
-					FargateStoppedAt:          fmt.Sprintf("FargateStoppedAt:          %s", toStr(task.StoppedAt)),
-					AppFinishedAt:             fmt.Sprintf("AppFinishedAt:             %s", rfc3339(time.Now())),
-				}
-				timelines = append(timelines, timeline)
-
-				exitcode := OutputExitCodes{
-					LastStatus:    aws.StringValue(task.LastStatus),
-					HealthStatus:  aws.StringValue(task.HealthStatus),
-					StopCode:      aws.StringValue(task.StopCode),
-					StoppedReason: aws.StringValue(task.StoppedReason),
-				}
-				containerExitCodes := []OutputContainerExitCodes{}
-				for _, container := range task.Containers {
-					containerExitCodes = append(containerExitCodes, OutputContainerExitCodes{
-						ExitCode:     aws.Int64Value(container.ExitCode),
-						Reason:       aws.StringValue(container.Reason),
-						LastStatus:   aws.StringValue(container.LastStatus),
-						HealthStatus: aws.StringValue(container.HealthStatus),
-					})
-				}
-				exitcode.Containers = containerExitCodes
-				exitcodes = append(exitcodes, exitcode)
+	timelines := []OutputTimelines{}
+	resources := []OutputResources{}
+	exitcodes := []OutputExitCodes{}
+	if len(tasks) > 0 {
+		for _, task := range tasks {
+			containers := []OutputContainerResources{}
+			taskID := ""
+			matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
+			if len(matched) > 0 && len(matched[0]) > 1 {
+				taskID = strings.Replace(matched[0][1], requestID+"/", "", -1)
 			}
+			for _, container := range task.Containers {
+				containers = append(containers, OutputContainerResources{
+					ContainerArn: aws.StringValue(container.ContainerArn),
+					LogStream:    fmt.Sprintf("fargate/%s/%s", aws.StringValue(container.Name), taskID),
+				})
+			}
+			resource := OutputResources{
+				ClusterArn:        aws.StringValue(task.ClusterArn),
+				TaskDefinitionArn: aws.StringValue(task.TaskDefinitionArn),
+				TaskArn:           aws.StringValue(task.TaskArn),
+				Containers:        containers,
+			}
+			resources = append(resources, resource)
+
+			timeline := OutputTimelines{
+				FargateCreatedAt:          fmt.Sprintf("FargateCreatedAt:          %s", toStr(task.CreatedAt)),
+				FargatePullStartedAt:      fmt.Sprintf("FargatePullStartedAt:      %s", toStr(task.PullStartedAt)),
+				FargatePullStoppedAt:      fmt.Sprintf("FargatePullStoppedAt:      %s", toStr(task.PullStoppedAt)),
+				FargateStartedAt:          fmt.Sprintf("FargateStartedAt:          %s", toStr(task.StartedAt)),
+				FargateExecutionStoppedAt: fmt.Sprintf("FargateExecutionStoppedAt: %s", toStr(task.ExecutionStoppedAt)),
+				FargateStoppedAt:          fmt.Sprintf("FargateStoppedAt:          %s", toStr(task.StoppedAt)),
+				AppFinishedAt:             fmt.Sprintf("AppFinishedAt:             %s", rfc3339(time.Now())),
+			}
+			timelines = append(timelines, timeline)
+
+			exitcode := OutputExitCodes{
+				LastStatus:    aws.StringValue(task.LastStatus),
+				HealthStatus:  aws.StringValue(task.HealthStatus),
+				StopCode:      aws.StringValue(task.StopCode),
+				StoppedReason: aws.StringValue(task.StoppedReason),
+			}
+			containerExitCodes := []OutputContainerExitCodes{}
+			for _, container := range task.Containers {
+				containerExitCodes = append(containerExitCodes, OutputContainerExitCodes{
+					ExitCode:     aws.Int64Value(container.ExitCode),
+					Reason:       aws.StringValue(container.Reason),
+					LastStatus:   aws.StringValue(container.LastStatus),
+					HealthStatus: aws.StringValue(container.HealthStatus),
+				})
+			}
+			exitcode.Containers = containerExitCodes
+			exitcodes = append(exitcodes, exitcode)
 		}
 		result.Meta = OutputMeta{
 			Resources: resources,
