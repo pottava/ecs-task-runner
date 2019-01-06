@@ -11,7 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	commands "github.com/pottava/ecs-task-runner"
-	log "github.com/pottava/ecs-task-runner/lib"
+	"github.com/pottava/ecs-task-runner/log"
 	cli "gopkg.in/alecthomas/kingpin.v2"
 )
 

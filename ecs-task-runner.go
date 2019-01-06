@@ -13,70 +13,20 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	cw "github.com/aws/aws-sdk-go/service/cloudwatchlogs"
-	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/aws/aws-sdk-go/service/iam"
-	sm "github.com/aws/aws-sdk-go/service/secretsmanager"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/docker/distribution/reference"
 	"github.com/google/uuid"
 	"github.com/pottava/ecs-task-runner/lib"
+	"github.com/pottava/ecs-task-runner/log"
 	"golang.org/x/sync/errgroup"
 )
 
-// AwsConfig is set of AWS configurations
-type AwsConfig struct {
-	accountID string
-	AccessKey *string
-	SecretKey *string
-	Region    *string
-}
-
-// CommonConfig is set of common configurations
-type CommonConfig struct {
-	EcsCluster     *string
-	ExecRoleName   *string
-	Timeout        *int64
-	ExtendedOutput *bool
-	IsDebugMode    bool
-}
-
-// RunConfig is set of configurations for running a container
-type RunConfig struct {
-	Aws            *AwsConfig
-	Common         *CommonConfig
-	Image          string
-	ForceECR       *bool
-	TaskDefFamily  *string
-	Entrypoint     []*string
-	Commands       []*string
-	Ports          []*int64
-	Environments   map[string]*string
-	Labels         map[string]*string
-	Subnets        []*string
-	SecurityGroups []*string
-	CPU            *string
-	Memory         *string
-	TaskRoleArn    *string
-	NumberOfTasks  *int64
-	KMSCustomKeyID *string
-	DockerUser     *string
-	DockerPassword *string
-	AssignPublicIP *bool
-	Asynchronous   *bool
-}
-
-// StopConfig is set of configurations for stopping a container
-type StopConfig struct {
-	Aws       *AwsConfig
-	Common    *CommonConfig
-	RequestID *string
-	TaskARNs  []*string
-}
-
 var (
 	requestID     string
+	logGroup      string
 	taskDefARN    *string
 	exitNormally  *int64
 	exitWithError *int64
@@ -84,6 +34,7 @@ var (
 
 func init() {
 	requestID = fmt.Sprintf("ecs-task-runner-%s", uuid.New().String())
+	logGroup = fmt.Sprintf("/ecs/%s", requestID)
 	exitNormally = aws.Int64(0)
 	exitWithError = aws.Int64(1)
 }
@@ -93,7 +44,7 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 	startedAt := time.Now()
 
 	if conf.Common.IsDebugMode {
-		lib.PrintJSON(conf)
+		log.PrintJSON(conf)
 	}
 	// Check AWS credentials
 	sess, err := lib.Session(conf.Aws.AccessKey, conf.Aws.SecretKey, conf.Aws.Region, nil)
@@ -159,7 +110,7 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 		return exitWithError, err
 	}
 	// Retrieve app log
-	logs := retrieveLogs(ctx, sess, tasks)
+	logs := lib.RetrieveLogs(ctx, sess, tasks, logGroup, logPrefix)
 	retrieveLogsAt := time.Now()
 
 	// Delete AWS resources
@@ -171,7 +122,7 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 	if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
 		return exitWithError, nil
 	}
-	exitCode = aws.Int64(0)
+	exitCode = exitNormally
 	for _, task := range tasks {
 		for _, container := range task.Containers {
 			if aws.Int64Value(exitCode) != 0 {
@@ -197,7 +148,7 @@ func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
 		conf.Common.EcsCluster = conf.RequestID
 	}
 	if conf.Common.IsDebugMode {
-		lib.PrintJSON(conf)
+		log.PrintJSON(conf)
 	}
 	// Retrieve all tasks to check cluster can be deleted or not
 	all, err := ecs.New(sess).ListTasksWithContext(ctx, &ecs.ListTasksInput{
@@ -212,7 +163,7 @@ func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
 		conf.TaskARNs = all.TaskArns
 	}
 	for _, taskARN := range conf.TaskARNs {
-		task, err := stopTask(ctx, sess, conf.Common, taskARN)
+		task, err := lib.StopTask(ctx, sess, conf.Common.EcsCluster, taskARN)
 		if err != nil {
 			return exitWithError, err
 		}
@@ -221,13 +172,14 @@ func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
 	tasks, _ = waitForTask(ctx, sess, conf.Common, tasks, func(task *ecs.Task) bool { // nolint
 		return task.ExecutionStoppedAt != nil
 	})
-	outputStopResults(ctx, conf, retrieveLogs(ctx, sess, tasks), tasks)
+	logs := lib.RetrieveLogs(ctx, sess, tasks, logGroup, logPrefix)
+	outputStopResults(ctx, conf, logs, tasks)
 
 	// Delete AWS resources
 	if len(all.TaskArns) == len(tasks) {
 		deleteResoucesInTheEnd(conf.Aws, conf.Common)
 	}
-	return aws.Int64(0), nil
+	return exitNormally, nil
 }
 
 func isEmpty(candidate *string) bool {
@@ -237,7 +189,7 @@ func isEmpty(candidate *string) bool {
 func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Session) (*string, error) {
 	imageHost, imageName, imageTag, err := parseImageName(conf.Image)
 	if err != nil {
-		lib.Errors.Println("Provided image name is invalid.")
+		log.Errors.Println("Provided image name is invalid.")
 		return nil, err
 	}
 	// Try to make up ECR image name
@@ -247,7 +199,7 @@ func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Sessi
 			return nil, errors.New("Provided AWS credentials are invalid")
 		}
 		if conf.Common.IsDebugMode {
-			lib.PrintJSON(account)
+			log.PrintJSON(account)
 		}
 		conf.Aws.accountID = aws.StringValue(account.Account)
 		if !strings.Contains(aws.StringValue(imageHost), conf.Aws.accountID) {
@@ -310,21 +262,21 @@ func parseImageName(value string) (*string, *string, *string, error) {
 
 func ensureAWSResources(ctx context.Context, sess *session.Session, conf *RunConfig) error {
 	eg, _ := errgroup.WithContext(context.Background())
-	vpc := findDefaultVPC(ctx, sess)
+	vpc := lib.FindDefaultVPC(ctx, sess)
 
 	// Ensure cluster existence
 	eg.Go(func() error {
 		if isEmpty(conf.Common.EcsCluster) {
 			conf.Common.EcsCluster = aws.String(requestID)
 		}
-		return createClusterIfNotExist(ctx, sess, conf.Common.EcsCluster)
+		return lib.CreateClusterIfNotExist(ctx, sess, conf.Common.EcsCluster)
 	})
 
 	// Ensure subnets existence
 	eg.Go(func() (err error) {
 		subnets := []*string{}
 		if conf.Subnets == nil || len(conf.Subnets) == 0 {
-			defSubnet := findDefaultSubnet(ctx, sess, vpc)
+			defSubnet := lib.FindDefaultSubnet(ctx, sess, vpc)
 			if defSubnet == nil {
 				return errors.New("There is no default subnet")
 			}
@@ -344,7 +296,7 @@ func ensureAWSResources(ctx context.Context, sess *session.Session, conf *RunCon
 	eg.Go(func() (err error) {
 		sgs := []*string{}
 		if conf.SecurityGroups == nil || len(conf.SecurityGroups) == 0 {
-			defSecurityGroup := findDefaultSg(ctx, sess, vpc)
+			defSecurityGroup := lib.FindDefaultSecurityGroup(ctx, sess, vpc)
 			if defSecurityGroup == nil {
 				return errors.New("There is no default security group")
 			}
@@ -360,74 +312,6 @@ func ensureAWSResources(ctx context.Context, sess *session.Session, conf *RunCon
 		return nil
 	})
 	return eg.Wait()
-}
-
-func createClusterIfNotExist(ctx context.Context, sess *session.Session, cluster *string) error {
-	out, err := ecs.New(sess).DescribeClustersWithContext(ctx, &ecs.DescribeClustersInput{
-		Clusters: []*string{cluster},
-	})
-	if err != nil {
-		return err
-	}
-	if len(out.Clusters) == 0 {
-		_, err = ecs.New(sess).CreateClusterWithContext(ctx, &ecs.CreateClusterInput{
-			ClusterName: cluster,
-		})
-	}
-	return err
-}
-
-func findDefaultVPC(ctx context.Context, sess *session.Session) *string {
-	out, err := ec2.New(sess).DescribeVpcsWithContext(ctx, &ec2.DescribeVpcsInput{
-		Filters: []*ec2.Filter{
-			&ec2.Filter{
-				Name:   aws.String("isDefault"),
-				Values: []*string{aws.String("true")},
-			},
-		},
-	})
-	if err != nil || len(out.Vpcs) == 0 {
-		return nil
-	}
-	return out.Vpcs[0].VpcId
-}
-
-func findDefaultSubnet(ctx context.Context, sess *session.Session, vpc *string) *string {
-	out, err := ec2.New(sess).DescribeSubnetsWithContext(ctx, &ec2.DescribeSubnetsInput{
-		Filters: []*ec2.Filter{
-			&ec2.Filter{
-				Name:   aws.String("vpc-id"),
-				Values: []*string{vpc},
-			},
-			&ec2.Filter{
-				Name:   aws.String("default-for-az"),
-				Values: []*string{aws.String("true")},
-			},
-		},
-	})
-	if err != nil || len(out.Subnets) == 0 {
-		return nil
-	}
-	return out.Subnets[0].SubnetId
-}
-
-func findDefaultSg(ctx context.Context, sess *session.Session, vpc *string) *string {
-	out, err := ec2.New(sess).DescribeSecurityGroupsWithContext(ctx, &ec2.DescribeSecurityGroupsInput{
-		Filters: []*ec2.Filter{
-			&ec2.Filter{
-				Name:   aws.String("vpc-id"),
-				Values: []*string{vpc},
-			},
-			&ec2.Filter{
-				Name:   aws.String("group-name"),
-				Values: []*string{aws.String("default")},
-			},
-		},
-	})
-	if err != nil || len(out.SecurityGroups) == 0 {
-		return nil
-	}
-	return out.SecurityGroups[0].GroupId
 }
 
 const (
@@ -457,6 +341,7 @@ const (
   }]
 }`
 	fargate   = "FARGATE"
+	logPrefix = "fargate"
 	awsVPC    = "awsvpc"
 	awsCWLogs = "awslogs"
 )
@@ -471,12 +356,21 @@ func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig,
 
 	eg.Go(func() error {
 		// Make a temporary log group
-		return createLogGroup(ctx, sess, conf)
+		return lib.CreateLogGroup(ctx, sess, logGroup)
 	})
 	eg.Go(func() (err error) {
 		if !isEmpty(conf.DockerUser) {
 			// Store private registry credentials in AWS SecretsManager
-			dockerCreds, err = createSecret(ctx, sess, conf)
+			dockerCreds, err = lib.CreateSecret(
+				ctx, sess,
+				aws.String(requestID),
+				conf.KMSCustomKeyID,
+				aws.String(fmt.Sprintf(
+					`{"username":"%s","password":"%s"}`,
+					aws.StringValue(conf.DockerUser),
+					aws.StringValue(conf.DockerPassword),
+				)),
+			)
 			if err != nil {
 				return err
 			}
@@ -495,31 +389,6 @@ func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig,
 		return nil, err
 	}
 	return taskDefInput, nil
-}
-
-func createLogGroup(ctx context.Context, sess *session.Session, conf *RunConfig) error {
-	_, err := cw.New(sess).CreateLogGroupWithContext(ctx, &cw.CreateLogGroupInput{
-		LogGroupName: aws.String(fmt.Sprintf("/ecs/%s", requestID)),
-	})
-	return err
-}
-
-func createSecret(ctx context.Context, sess *session.Session, conf *RunConfig) (*string, error) {
-	out, err := sm.New(sess).CreateSecretWithContext(ctx, &sm.CreateSecretInput{
-		Name:     aws.String(requestID),
-		KmsKeyId: conf.KMSCustomKeyID,
-		SecretString: aws.String(fmt.Sprintf(`{
-			"username" : "%s",
-			"password" : "%s"
-		}`,
-			aws.StringValue(conf.DockerUser),
-			aws.StringValue(conf.DockerPassword),
-		)),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return out.ARN, nil
 }
 
 func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) (*string, error) {
@@ -541,7 +410,7 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) 
 		}
 		execRoleArn = out.Role.Arn
 	}
-	if err = attachPolicy(ctx, sess, roleName, aws.String(ecsManagedExecPolicyArn)); err != nil {
+	if err = lib.AttachPolicy(ctx, sess, roleName, aws.String(ecsManagedExecPolicyArn)); err != nil {
 		return nil, err
 	}
 	// If you'd like to use private repo, the execution role has to have a special policy.
@@ -556,31 +425,22 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) 
 				aws.StringValue(conf.KMSCustomKeyID),
 			)
 		}
-		policy, err := iam.New(sess).CreatePolicyWithContext(ctx, &iam.CreatePolicyInput{
-			PolicyName: aws.String(fmt.Sprintf("ecs-custom-%s", requestID)),
-			PolicyDocument: aws.String(fmt.Sprintf(
+		policy, err := lib.CreatePolicy(
+			ctx, sess,
+			fmt.Sprintf("ecs-custom-%s", requestID),
+			fmt.Sprintf(
 				ecsPrivateRepoPolicyDocument,
 				keyResource,
-				aws.StringValue(dockerCreds))),
-			Path: aws.String("/"),
-		})
+				aws.StringValue(dockerCreds)))
 		if err != nil {
 			return nil, err
 		}
-		credsPolicy = policy.Policy.Arn
-		if err = attachPolicy(ctx, sess, roleName, credsPolicy); err != nil {
+		credsPolicy = policy.Arn
+		if err = lib.AttachPolicy(ctx, sess, roleName, credsPolicy); err != nil {
 			return nil, err
 		}
 	}
 	return execRoleArn, nil
-}
-
-func attachPolicy(ctx context.Context, sess *session.Session, roleName, policyArn *string) error {
-	_, err := iam.New(sess).AttachRolePolicyWithContext(ctx, &iam.AttachRolePolicyInput{
-		RoleName:  roleName,
-		PolicyArn: policyArn,
-	})
-	return err
 }
 
 func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig, image, execRoleArn *string) (*string, *ecs.RegisterTaskDefinitionInput, error) {
@@ -619,8 +479,8 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 					LogDriver: aws.String(awsCWLogs),
 					Options: map[string]*string{
 						"awslogs-region":        conf.Aws.Region,
-						"awslogs-group":         aws.String(fmt.Sprintf("/ecs/%s", requestID)),
-						"awslogs-stream-prefix": aws.String("fargate"),
+						"awslogs-group":         aws.String(logGroup),
+						"awslogs-stream-prefix": aws.String(logPrefix),
 					},
 				},
 			},
@@ -634,7 +494,7 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 		}
 	}
 	if conf.Common.IsDebugMode {
-		lib.PrintJSON(input)
+		log.PrintJSON(input)
 	}
 	out, err := ecs.New(sess).RegisterTaskDefinitionWithContext(ctx, &input)
 	if err != nil {
@@ -662,7 +522,7 @@ func run(ctx context.Context, sess *session.Session, conf *RunConfig) ([]*ecs.Ta
 		},
 	}
 	if conf.Common.IsDebugMode {
-		lib.PrintJSON(input)
+		log.PrintJSON(input)
 	}
 	// Avoid the following error
 	// ClientException: ECS was unable to assume the role that was provided for this task.
@@ -714,7 +574,7 @@ func waitForTask(ctx context.Context, sess *session.Session, conf *CommonConfig,
 				}
 				if done {
 					if conf.IsDebugMode {
-						lib.PrintJSON(tasks.Tasks)
+						log.PrintJSON(tasks.Tasks)
 					}
 					return tasks.Tasks, nil
 				}
@@ -722,39 +582,6 @@ func waitForTask(ctx context.Context, sess *session.Session, conf *CommonConfig,
 			time.Sleep(1 * time.Second)
 		}
 	}
-}
-
-func stopTask(ctx context.Context, sess *session.Session, conf *CommonConfig, taskARN *string) (*ecs.Task, error) {
-	task, err := ecs.New(sess).StopTaskWithContext(ctx, &ecs.StopTaskInput{
-		Cluster: conf.EcsCluster,
-		Task:    taskARN,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return task.Task, nil
-}
-
-var regTaskID = regexp.MustCompile("task/(.*)")
-
-func retrieveLogs(ctx context.Context, sess *session.Session, tasks []*ecs.Task) map[string][]*cw.OutputLogEvent {
-	result := map[string][]*cw.OutputLogEvent{}
-
-	for _, task := range tasks {
-		taskID := ""
-		matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
-		if len(matched) > 0 && len(matched[0]) > 1 {
-			taskID = matched[0][1]
-		}
-		out, err := cw.New(sess).GetLogEventsWithContext(ctx, &cw.GetLogEventsInput{
-			LogGroupName:  aws.String(fmt.Sprintf("/ecs/%s", requestID)),
-			LogStreamName: aws.String(fmt.Sprintf("fargate/app/%s", taskID)),
-		})
-		if err == nil {
-			result[aws.StringValue(task.TaskArn)] = out.Events
-		}
-	}
-	return result
 }
 
 // DeleteResouces deletes temporary AWS resources
@@ -784,17 +611,19 @@ func deleteResoucesImmediately(aws *AwsConfig, conf *CommonConfig) {
 	// Delete the private registry creds in Secrets Manager
 	go func() {
 		defer wg.Done()
-		deletePrivateRegistryCreds(sess, conf.IsDebugMode)
+		lib.DeleteSecret(sess, dockerCreds, true, conf.IsDebugMode)
 	}()
 	// Delete the IAM policy for private registry creds
 	go func() {
 		defer wg.Done()
-		deletePrivateRegistryRole(sess, conf.ExecRoleName, conf.IsDebugMode)
+		if dockerCreds != nil {
+			lib.DeletePolicy(sess, conf.ExecRoleName, credsPolicy, conf.IsDebugMode)
+		}
 	}()
 	// Delete the temporary task definition
 	go func() {
 		defer wg.Done()
-		deregisterTaskDef(sess, conf.IsDebugMode)
+		lib.DeregisterTaskDef(sess, taskDefARN, conf.IsDebugMode)
 	}()
 	wg.Wait()
 }
@@ -810,68 +639,17 @@ func deleteResoucesInTheEnd(aws *AwsConfig, conf *CommonConfig) {
 	// Delete the temporary log group
 	go func() {
 		defer wg.Done()
-		deleteLogGroup(sess, conf.IsDebugMode)
+		lib.DeleteLogGroup(sess, logGroup, conf.IsDebugMode)
 	}()
 	// Delete the temporary ECS cluster
 	go func() {
 		defer wg.Done()
-		deleteECSCluster(sess, conf.IsDebugMode)
+		lib.DeleteECSCluster(sess, requestID, conf.IsDebugMode)
 	}()
 	wg.Wait()
 }
 
-func deletePrivateRegistryCreds(sess *session.Session, debug bool) {
-	if dockerCreds == nil {
-		return
-	}
-	if _, err := sm.New(sess).DeleteSecret(&sm.DeleteSecretInput{
-		SecretId:                   dockerCreds,
-		ForceDeleteWithoutRecovery: aws.Bool(true),
-	}); err != nil && debug {
-		lib.PrintJSON(err)
-	}
-}
-
-func deletePrivateRegistryRole(sess *session.Session, roleName *string, debug bool) {
-	if dockerCreds == nil {
-		return
-	}
-	if _, err := iam.New(sess).DetachRolePolicy(&iam.DetachRolePolicyInput{
-		RoleName:  roleName,
-		PolicyArn: credsPolicy,
-	}); err != nil && debug {
-		lib.PrintJSON(err)
-	}
-	if _, err := iam.New(sess).DeletePolicy(&iam.DeletePolicyInput{
-		PolicyArn: credsPolicy,
-	}); err != nil && debug {
-		lib.PrintJSON(err)
-	}
-}
-
-func deregisterTaskDef(sess *session.Session, debug bool) {
-	if _, err := ecs.New(sess).DeregisterTaskDefinition(&ecs.DeregisterTaskDefinitionInput{
-		TaskDefinition: taskDefARN,
-	}); err != nil && debug {
-		lib.PrintJSON(err)
-	}
-}
-
-func deleteLogGroup(sess *session.Session, debug bool) {
-	if _, err := cw.New(sess).DeleteLogGroup(&cw.DeleteLogGroupInput{
-		LogGroupName: aws.String(fmt.Sprintf("/ecs/%s", requestID)),
-	}); err != nil && debug {
-		lib.PrintJSON(err)
-	}
-}
-
-func deleteECSCluster(sess *session.Session, debug bool) {
-	if _, err := ecs.New(sess).DeleteCluster(&ecs.DeleteClusterInput{
-		Cluster: aws.String(requestID),
-	}); err != nil && debug {
-		lib.PrintJSON(err)
-	}
-}
+var regTaskID = regexp.MustCompile("task/(.*)")
 
 func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt time.Time, logsAt *time.Time, logs map[string][]*cw.OutputLogEvent, taskdef *ecs.RegisterTaskDefinitionInput, runconfig *ecs.RunTaskInput, tasks []*ecs.Task) {
 	result := map[string]interface{}{}
@@ -883,7 +661,14 @@ func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt
 			for _, task := range tasks {
 				resource := map[string]string{}
 				resource["TaskARN"] = aws.StringValue(task.TaskArn)
-				resource["PublicIP"] = retrievePublicIP(ctx, conf.Aws, task, conf.Common.IsDebugMode)
+				resource["PublicIP"] = lib.RetrievePublicIP(
+					ctx,
+					conf.Aws.AccessKey,
+					conf.Aws.SecretKey,
+					conf.Aws.Region,
+					task,
+					conf.Common.IsDebugMode,
+				)
 				resources = append(resources, resource)
 			}
 			result["Tasks"] = resources
@@ -916,8 +701,14 @@ func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt
 				resource["TaskArn"] = aws.StringValue(task.TaskArn)
 				resource["TaskRoleArn"] = aws.StringValue(taskdef.TaskRoleArn)
 				resource["LogGroup"] = aws.StringValue(container.LogConfiguration.Options["awslogs-group"])
-				resource["PublicIP"] = retrievePublicIP(ctx, conf.Aws, task, conf.Common.IsDebugMode)
-
+				resource["PublicIP"] = lib.RetrievePublicIP(
+					ctx,
+					conf.Aws.AccessKey,
+					conf.Aws.SecretKey,
+					conf.Aws.Region,
+					task,
+					conf.Common.IsDebugMode,
+				)
 				containers := []map[string]interface{}{}
 				taskID := ""
 				matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
@@ -973,7 +764,7 @@ func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt
 			"5.exitcodes": exitcodes,
 		}
 	}
-	lib.PrintJSON(result)
+	log.PrintJSON(result)
 }
 
 func outputStopResults(ctx context.Context, conf *StopConfig, logs map[string][]*cw.OutputLogEvent, tasks []*ecs.Task) {
@@ -1052,7 +843,7 @@ func outputStopResults(ctx context.Context, conf *StopConfig, logs map[string][]
 			"3.exitcodes": exitcodes,
 		}
 	}
-	lib.PrintJSON(result)
+	log.PrintJSON(result)
 }
 
 func toStr(t *time.Time) string {
@@ -1064,38 +855,4 @@ func toStr(t *time.Time) string {
 
 func rfc3339(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
-}
-
-func retrievePublicIP(ctx context.Context, conf *AwsConfig, task *ecs.Task, debug bool) string {
-	if task == nil || len(task.Attachments) == 0 {
-		return ""
-	}
-	var eniID *string
-	for _, detail := range task.Attachments[0].Details {
-		if strings.EqualFold(aws.StringValue(detail.Name), "networkInterfaceId") {
-			eniID = detail.Value
-		}
-	}
-	if eniID == nil {
-		return ""
-	}
-	sess, err := lib.Session(conf.AccessKey, conf.SecretKey, conf.Region, nil)
-	if err != nil && debug {
-		lib.PrintJSON(err)
-		return ""
-	}
-	input := &ec2.DescribeNetworkInterfacesInput{
-		NetworkInterfaceIds: []*string{eniID},
-	}
-	eni, err := ec2.New(sess).DescribeNetworkInterfacesWithContext(ctx, input)
-	if err != nil {
-		if debug {
-			lib.PrintJSON(err)
-		}
-		return ""
-	}
-	if len(eni.NetworkInterfaces) == 0 {
-		return ""
-	}
-	return aws.StringValue(eni.NetworkInterfaces[0].Association.PublicIp)
 }
