@@ -5,10 +5,9 @@
 [![pottava/ecs-task-runner](http://dockeri.co/image/pottava/ecs-task-runner)](https://hub.docker.com/r/pottava/ecs-task-runner/)
 
 Supported tags and respective `Dockerfile` links:  
-・latest ([versions/2.1/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.1/Dockerfile))  
-・2.1 ([versions/2.1/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.1/Dockerfile))  
-・2 ([versions/2.1/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.1/Dockerfile))  
-・1.2 ([versions/1.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/1.2/Dockerfile))  
+・latest ([versions/2.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.2/Dockerfile))  
+・2.2 ([versions/2.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.2/Dockerfile))  
+・2 ([versions/2.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.2/Dockerfile))  
 ・1 ([versions/1.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/1.2/Dockerfile))  
 
 
@@ -22,13 +21,13 @@ This is a synchronous task runner for AWS Fargate. It runs a docker container on
 curl (macOS):
 
 ```
-$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.1/ecs-task-runner_darwin_amd64 && chmod +x ecs-task-runner
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.2/ecs-task-runner_darwin_amd64 && chmod +x ecs-task-runner
 ```
 
 curl (Linux):
 
 ```
-$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.1/ecs-task-runner_linux_amd64 && chmod +x ecs-task-runner
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.2/ecs-task-runner_linux_amd64 && chmod +x ecs-task-runner
 ```
 
 go:
@@ -54,6 +53,7 @@ AWS_ACCESS_KEY_ID         | access-key, a   | AWS `access key` for API access | 
 AWS_SECRET_ACCESS_KEY     | secret-key, s   | AWS `secret key` for API access | *        |
 AWS_DEFAULT_REGION        | region, r       | AWS `region` for API access     |          | us-east-1
 ECS_CLUSTER               | cluster, c      | Amazon ECS cluster name         |          |
+EXEC_ROLE_NAME            | exec-role-name  | Name of an execution role       |          | ecs-task-runner
 TASK_TIMEOUT              | timeout, t      | Timeout minutes for the task    |          | 30
 EXTENDED_OUTPUT           | extended-output | True: meta data also returns    |          | false
 
@@ -72,10 +72,12 @@ SUBNETS                   | subnets         | Fargate's Subnets               | 
 SECURITY_GROUPS           | security-groups | Fargate's SecurityGroups        |          |
 TASKDEF_FAMILY            | taskdef-family  | ECS Task Definition family name |          | ecs-task-runner
 TASK_ROLE                 | task-role-arn   | ARN of an IAM Role for the task |          |
-EXEC_ROLE_NAME            | exec-role-name  | Name of an execution role       |          | ecs-task-runner
 CPU                       | cpu             | Requested vCPU to run Fargate   |          | 256
 MEMORY                    | memory          | Requested memory to run Fargate |          | 512
 NUMBER                    | number, n       | Number of tasks                 |          | 1
+PRIVATE_REGISTRY_USER     | user            | PrivateRegistry Username        |          | 
+PRIVATE_REGISTRY_PASSWORD | password        | PrivateRegistry Password        |          | 
+KMS_CUSTOMKEY_ID          | kms-key-id      | KMS custom key ID for SecretsManager |     | 
 ASSIGN_PUBLIC_IP          | assign-pub-ip   | True: Assigns public IP         |          | true
 ASYNC                     | async           | True: Does not wait for the job done |     | false
 

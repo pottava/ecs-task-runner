@@ -17,7 +17,7 @@ import (
 
 // for compile flags
 var (
-	version = "2.0.x"
+	version = "dev"
 	commit  string
 	date    string
 )
