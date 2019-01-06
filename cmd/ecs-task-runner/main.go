@@ -181,12 +181,38 @@ func main() {
 		}()
 
 		// Execute
-		exitCode, err := commands.Run(ctx, runconf)
+		out, err := commands.Run(ctx, runconf)
 		if err != nil {
 			log.Errors.Fatal(err)
 			return
 		}
-		os.Exit(int(aws.Int64Value(exitCode)))
+		if aws.BoolValue(runconf.Asynchronous) {
+			if aws.BoolValue(common.ExtendedOutput) {
+				log.PrintJSON(struct {
+					RequestID  string                     `json:"RequestID"`
+					AsyncTasks []commands.OutputAsyncTask `json:"Tasks"`
+					Meta       commands.OutputMeta        `json:"meta"`
+				}{
+					RequestID:  out.RequestID,
+					AsyncTasks: out.AsyncTasks,
+					Meta:       out.Meta,
+				})
+			} else {
+				log.PrintJSON(struct {
+					RequestID  string                     `json:"RequestID"`
+					AsyncTasks []commands.OutputAsyncTask `json:"Tasks"`
+				}{
+					RequestID:  out.RequestID,
+					AsyncTasks: out.AsyncTasks,
+				})
+			}
+		} else {
+			if aws.BoolValue(common.ExtendedOutput) {
+				out.SyncLogs["meta"] = out.Meta
+			}
+			log.PrintJSON(out.SyncLogs)
+		}
+		os.Exit(int(aws.Int64Value(out.ExitCode)))
 
 	case stop.FullCommand():
 		stopconf.TaskARNs = []*string{}
@@ -207,11 +233,15 @@ func main() {
 		}()
 
 		// Execute
-		exitCode, err := commands.Stop(ctx, stopconf)
+		out, err := commands.Stop(ctx, stopconf)
 		if err != nil {
 			log.Errors.Fatal(err)
 			return
 		}
-		os.Exit(int(aws.Int64Value(exitCode)))
+		if aws.BoolValue(common.ExtendedOutput) {
+			out.SyncLogs["meta"] = out.Meta
+		}
+		log.PrintJSON(out.SyncLogs)
+		os.Exit(int(aws.Int64Value(out.ExitCode)))
 	}
 }

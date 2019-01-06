@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
-	cw "github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/aws/aws-sdk-go/service/iam"
@@ -25,22 +23,18 @@ import (
 )
 
 var (
-	requestID     string
-	logGroup      string
-	taskDefARN    *string
-	exitNormally  *int64
-	exitWithError *int64
+	requestID  string
+	logGroup   string
+	taskDefARN *string
 )
 
 func init() {
 	requestID = fmt.Sprintf("ecs-task-runner-%s", uuid.New().String())
 	logGroup = fmt.Sprintf("/ecs/%s", requestID)
-	exitNormally = aws.Int64(0)
-	exitWithError = aws.Int64(1)
 }
 
 // Run runs the docker image on Amazon ECS
-func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
+func Run(ctx context.Context, conf *RunConfig) (output *Output, err error) {
 	startedAt := time.Now()
 
 	if conf.Common.IsDebugMode {
@@ -49,7 +43,7 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 	// Check AWS credentials
 	sess, err := lib.Session(conf.Aws.AccessKey, conf.Aws.SecretKey, conf.Aws.Region, nil)
 	if err != nil {
-		return exitWithError, err
+		return &Output{ExitCode: exitWithError}, err
 	}
 	eg, _ := errgroup.WithContext(context.Background())
 
@@ -64,21 +58,21 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 		return ensureAWSResources(ctx, sess, conf)
 	})
 	if err = eg.Wait(); err != nil {
-		return exitWithError, err
+		return &Output{ExitCode: exitWithError}, err
 	}
 	// Create AWS resources
 	var taskDefInput *ecs.RegisterTaskDefinitionInput
 	taskDefInput, err = createResouces(ctx, sess, conf, image)
 	if err != nil {
 		DeleteResouces(conf.Aws, conf.Common)
-		return exitWithError, err
+		return &Output{ExitCode: exitWithError}, err
 	}
 	// Run the ECS task
 	runTaskAt := time.Now()
 	tasks, runconfig, err := run(ctx, sess, conf)
 	if err != nil {
 		DeleteResouces(conf.Aws, conf.Common)
-		return exitWithError, err
+		return &Output{ExitCode: exitWithError}, err
 	}
 	// Asynchronous job
 	if aws.BoolValue(conf.Asynchronous) {
@@ -89,15 +83,14 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 		})
 		if err != nil {
 			DeleteResouces(conf.Aws, conf.Common)
-			return exitWithError, err
+			return &Output{ExitCode: exitWithError}, err
 		}
-		outputRunResults(ctx, conf, startedAt, runTaskAt, nil, nil, taskDefInput, runconfig, tasks)
-		deleteResoucesImmediately(conf.Aws, conf.Common)
-
+		output = runResults(ctx, conf, startedAt, runTaskAt, nil, nil, taskDefInput, runconfig, tasks)
 		if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
-			return exitWithError, nil
+			output.ExitCode = exitWithError
 		}
-		return exitNormally, nil
+		deleteResoucesImmediately(conf.Aws, conf.Common)
+		return output, nil
 	}
 	// Wait for its done
 	tasks, err = waitForTask(ctx, sess, conf.Common, tasks, func(task *ecs.Task) bool {
@@ -107,7 +100,7 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 	})
 	if err != nil {
 		DeleteResouces(conf.Aws, conf.Common)
-		return exitWithError, err
+		return &Output{ExitCode: exitWithError}, err
 	}
 	// Retrieve app log
 	logs := lib.RetrieveLogs(ctx, sess, tasks, requestID, logGroup, logPrefix)
@@ -117,30 +110,29 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 	DeleteResouces(conf.Aws, conf.Common)
 
 	// Format the result
-	outputRunResults(ctx, conf, startedAt, runTaskAt, &retrieveLogsAt, logs, taskDefInput, runconfig, tasks)
+	output = runResults(ctx, conf, startedAt, runTaskAt, &retrieveLogsAt, logs, taskDefInput, runconfig, tasks)
 
 	if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
-		return exitWithError, nil
+		return &Output{ExitCode: exitWithError}, nil
 	}
-	exitCode = exitNormally
 	for _, task := range tasks {
 		for _, container := range task.Containers {
-			if aws.Int64Value(exitCode) != 0 {
+			if aws.Int64Value(output.ExitCode) != 0 {
 				break
 			}
-			exitCode = container.ExitCode
+			output.ExitCode = container.ExitCode
 		}
 	}
-	return exitCode, nil
+	return output, nil
 }
 
 // Stop stops the Fargate container on Amazon ECS
-func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
+func Stop(ctx context.Context, conf *StopConfig) (output *Output, err error) {
 
 	// Check AWS credentials
 	sess, err := lib.Session(conf.Aws.AccessKey, conf.Aws.SecretKey, conf.Aws.Region, nil)
 	if err != nil {
-		return exitWithError, err
+		return &Output{ExitCode: exitWithError}, err
 	}
 	// Ensure parameters
 	requestID = aws.StringValue(conf.RequestID)
@@ -155,7 +147,7 @@ func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
 		Cluster: conf.Common.EcsCluster,
 	})
 	if err != nil {
-		return exitWithError, err
+		return &Output{ExitCode: exitWithError}, err
 	}
 	// Stop the task
 	tasks := []*ecs.Task{}
@@ -165,7 +157,7 @@ func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
 	for _, taskARN := range conf.TaskARNs {
 		task, err := lib.StopTask(ctx, sess, conf.Common.EcsCluster, taskARN)
 		if err != nil {
-			return exitWithError, err
+			return &Output{ExitCode: exitWithError}, err
 		}
 		tasks = append(tasks, task)
 	}
@@ -173,13 +165,13 @@ func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
 		return task.ExecutionStoppedAt != nil
 	})
 	logs := lib.RetrieveLogs(ctx, sess, tasks, requestID, logGroup, logPrefix)
-	outputStopResults(ctx, conf, logs, tasks)
+	output = stopResults(ctx, conf, logs, tasks)
 
 	// Delete AWS resources
 	if len(all.TaskArns) == len(tasks) {
 		deleteResoucesInTheEnd(conf.Aws, conf.Common)
 	}
-	return exitNormally, nil
+	return output, nil
 }
 
 func isEmpty(candidate *string) bool {
@@ -664,212 +656,4 @@ func deleteResoucesInTheEnd(aws *AwsConfig, conf *CommonConfig) {
 		lib.DeleteECSCluster(sess, requestID, conf.IsDebugMode)
 	}()
 	wg.Wait()
-}
-
-var regTaskID = regexp.MustCompile("task/(.*)")
-
-func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt time.Time, logsAt *time.Time, logs map[string][]*cw.OutputLogEvent, taskdef *ecs.RegisterTaskDefinitionInput, runconfig *ecs.RunTaskInput, tasks []*ecs.Task) {
-	result := map[string]interface{}{}
-
-	if aws.BoolValue(conf.Asynchronous) { // Async mode
-		result["RequestID"] = requestID
-		if len(tasks) > 0 {
-			resources := []map[string]string{}
-			for _, task := range tasks {
-				resource := map[string]string{}
-				resource["TaskARN"] = aws.StringValue(task.TaskArn)
-				resource["PublicIP"] = lib.RetrievePublicIP(
-					ctx,
-					conf.Aws.AccessKey,
-					conf.Aws.SecretKey,
-					conf.Aws.Region,
-					task,
-					conf.Common.IsDebugMode,
-				)
-				resources = append(resources, resource)
-			}
-			result["Tasks"] = resources
-		}
-	} else { // Sync mode
-		seq := 1
-		for _, value := range logs {
-			messages := []string{}
-			for _, event := range value {
-				messages = append(messages, fmt.Sprintf(
-					"%s: %s",
-					time.Unix(aws.Int64Value(event.Timestamp)/1000, 0).Format(time.RFC3339),
-					aws.StringValue(event.Message),
-				))
-			}
-			result[fmt.Sprintf("container-%d", seq)] = messages
-			seq++
-		}
-	}
-	if aws.BoolValue(conf.Common.ExtendedOutput) {
-		timelines := []map[string]string{}
-		resources := []map[string]interface{}{}
-		exitcodes := []map[string]interface{}{}
-		if len(tasks) > 0 {
-			for _, task := range tasks {
-				resource := map[string]interface{}{}
-				container := taskdef.ContainerDefinitions[0]
-				resource["ClusterArn"] = aws.StringValue(task.ClusterArn)
-				resource["TaskDefinitionArn"] = aws.StringValue(task.TaskDefinitionArn)
-				resource["TaskArn"] = aws.StringValue(task.TaskArn)
-				resource["TaskRoleArn"] = aws.StringValue(taskdef.TaskRoleArn)
-				resource["LogGroup"] = aws.StringValue(container.LogConfiguration.Options["awslogs-group"])
-				resource["PublicIP"] = lib.RetrievePublicIP(
-					ctx,
-					conf.Aws.AccessKey,
-					conf.Aws.SecretKey,
-					conf.Aws.Region,
-					task,
-					conf.Common.IsDebugMode,
-				)
-				containers := []map[string]interface{}{}
-				taskID := ""
-				matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
-				if len(matched) > 0 && len(matched[0]) > 1 {
-					taskID = strings.Replace(matched[0][1], requestID+"/", "", -1)
-				}
-				for _, container := range task.Containers {
-					containers = append(containers, map[string]interface{}{
-						"ContainerArn": aws.StringValue(container.ContainerArn),
-						"LogStream":    fmt.Sprintf("fargate/%s/%s", aws.StringValue(container.Name), taskID),
-					})
-				}
-				resource["Containers"] = containers
-				resources = append(resources, resource)
-
-				timeline := map[string]string{}
-				timeline["0"] = fmt.Sprintf("AppStartedAt:              %s", rfc3339(startedAt))
-				timeline["1"] = fmt.Sprintf("AppTriedToRunFargateAt:    %s", rfc3339(runTaskAt))
-				timeline["2"] = fmt.Sprintf("FargateCreatedAt:          %s", toStr(task.CreatedAt))
-				timeline["3"] = fmt.Sprintf("FargatePullStartedAt:      %s", toStr(task.PullStartedAt))
-				timeline["4"] = fmt.Sprintf("FargatePullStoppedAt:      %s", toStr(task.PullStoppedAt))
-				timeline["5"] = fmt.Sprintf("FargateStartedAt:          %s", toStr(task.StartedAt))
-				timeline["6"] = fmt.Sprintf("FargateExecutionStoppedAt: %s", toStr(task.ExecutionStoppedAt))
-				timeline["7"] = fmt.Sprintf("FargateStoppedAt:          %s", toStr(task.StoppedAt))
-				timeline["8"] = fmt.Sprintf("AppRetrievedLogsAt:        %s", rfc3339(aws.TimeValue(logsAt)))
-				timeline["9"] = fmt.Sprintf("AppFinishedAt:             %s", rfc3339(time.Now()))
-				timelines = append(timelines, timeline)
-
-				exitcode := map[string]interface{}{
-					"TaskLastStatus":    aws.StringValue(task.LastStatus),
-					"TaskHealthStatus":  aws.StringValue(task.HealthStatus),
-					"TaskStopCode":      aws.StringValue(task.StopCode),
-					"TaskStoppedReason": aws.StringValue(task.StoppedReason),
-				}
-				containers = []map[string]interface{}{}
-				for _, container := range task.Containers {
-					containers = append(containers, map[string]interface{}{
-						"ExitCode":     aws.Int64Value(container.ExitCode),
-						"Reason":       aws.StringValue(container.Reason),
-						"LastStatus":   aws.StringValue(container.LastStatus),
-						"HealthStatus": aws.StringValue(container.HealthStatus),
-					})
-				}
-				exitcode["Containers"] = containers
-				exitcodes = append(exitcodes, exitcode)
-			}
-		}
-		result["meta"] = map[string]interface{}{
-			"1.taskdef":   taskdef,
-			"2.runconfig": runconfig,
-			"3.resources": resources,
-			"4.timeline":  timelines,
-			"5.exitcodes": exitcodes,
-		}
-	}
-	log.PrintJSON(result)
-}
-
-func outputStopResults(ctx context.Context, conf *StopConfig, logs map[string][]*cw.OutputLogEvent, tasks []*ecs.Task) {
-	result := map[string]interface{}{}
-	seq := 1
-	for _, value := range logs {
-		messages := []string{}
-		for _, event := range value {
-			messages = append(messages, fmt.Sprintf(
-				"%s: %s",
-				time.Unix(aws.Int64Value(event.Timestamp)/1000, 0).Format(time.RFC3339),
-				aws.StringValue(event.Message),
-			))
-		}
-		result[fmt.Sprintf("container-%d", seq)] = messages
-		seq++
-	}
-	if aws.BoolValue(conf.Common.ExtendedOutput) {
-		timelines := []map[string]string{}
-		resources := []map[string]interface{}{}
-		exitcodes := []map[string]interface{}{}
-		if len(tasks) > 0 {
-			for _, task := range tasks {
-				resource := map[string]interface{}{}
-				resource["ClusterArn"] = aws.StringValue(task.ClusterArn)
-				resource["TaskDefinitionArn"] = aws.StringValue(task.TaskDefinitionArn)
-				resource["TaskArn"] = aws.StringValue(task.TaskArn)
-
-				containers := []map[string]interface{}{}
-				taskID := ""
-				matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
-				if len(matched) > 0 && len(matched[0]) > 1 {
-					taskID = matched[0][1]
-				}
-				for _, container := range task.Containers {
-					containers = append(containers, map[string]interface{}{
-						"ContainerArn": aws.StringValue(container.ContainerArn),
-						"LogStream":    fmt.Sprintf("fargate/%s/%s", aws.StringValue(container.Name), taskID),
-					})
-				}
-				resource["Containers"] = containers
-				resources = append(resources, resource)
-
-				timeline := map[string]string{}
-				timeline["1"] = fmt.Sprintf("FargateCreatedAt:          %s", toStr(task.CreatedAt))
-				timeline["2"] = fmt.Sprintf("FargatePullStartedAt:      %s", toStr(task.PullStartedAt))
-				timeline["3"] = fmt.Sprintf("FargatePullStoppedAt:      %s", toStr(task.PullStoppedAt))
-				timeline["4"] = fmt.Sprintf("FargateStartedAt:          %s", toStr(task.StartedAt))
-				timeline["5"] = fmt.Sprintf("FargateExecutionStoppedAt: %s", toStr(task.ExecutionStoppedAt))
-				timeline["6"] = fmt.Sprintf("FargateStoppedAt:          %s", toStr(task.StoppedAt))
-				timeline["7"] = fmt.Sprintf("AppFinishedAt:             %s", rfc3339(time.Now()))
-				timelines = append(timelines, timeline)
-
-				exitcode := map[string]interface{}{
-					"TaskLastStatus":    aws.StringValue(task.LastStatus),
-					"TaskHealthStatus":  aws.StringValue(task.HealthStatus),
-					"TaskStopCode":      aws.StringValue(task.StopCode),
-					"TaskStoppedReason": aws.StringValue(task.StoppedReason),
-				}
-				containers = []map[string]interface{}{}
-				for _, container := range task.Containers {
-					containers = append(containers, map[string]interface{}{
-						"ExitCode":     aws.Int64Value(container.ExitCode),
-						"Reason":       aws.StringValue(container.Reason),
-						"LastStatus":   aws.StringValue(container.LastStatus),
-						"HealthStatus": aws.StringValue(container.HealthStatus),
-					})
-				}
-				exitcode["Containers"] = containers
-				exitcodes = append(exitcodes, exitcode)
-			}
-		}
-		result["meta"] = map[string]interface{}{
-			"1.resources": resources,
-			"2.timeline":  timelines,
-			"3.exitcodes": exitcodes,
-		}
-	}
-	log.PrintJSON(result)
-}
-
-func toStr(t *time.Time) string {
-	if t == nil {
-		return "---"
-	}
-	return rfc3339(aws.TimeValue(t))
-}
-
-func rfc3339(t time.Time) string {
-	return t.UTC().Format(time.RFC3339)
 }
