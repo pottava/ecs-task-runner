@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/aws/aws-sdk-go/service/iam"
+	sm "github.com/aws/aws-sdk-go/service/secretsmanager"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/docker/distribution/reference"
 	"github.com/google/uuid"
@@ -26,6 +27,7 @@ import (
 
 // AwsConfig is set of AWS configurations
 type AwsConfig struct {
+	accountID string
 	AccessKey *string
 	SecretKey *string
 	Region    *string
@@ -34,6 +36,7 @@ type AwsConfig struct {
 // CommonConfig is set of common configurations
 type CommonConfig struct {
 	EcsCluster     *string
+	ExecRoleName   *string
 	Timeout        *int64
 	ExtendedOutput *bool
 	IsDebugMode    bool
@@ -56,8 +59,10 @@ type RunConfig struct {
 	CPU            *string
 	Memory         *string
 	TaskRoleArn    *string
-	ExecRoleName   *string
 	NumberOfTasks  *int64
+	KMSCustomKeyID *string
+	DockerUser     *string
+	DockerPassword *string
 	AssignPublicIP *bool
 	Asynchronous   *bool
 }
@@ -112,7 +117,7 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 	}
 	// Create AWS resources
 	var taskDefInput *ecs.RegisterTaskDefinitionInput
-	taskDefARN, _, taskDefInput, err = createResouces(ctx, sess, conf, image)
+	taskDefInput, err = createResouces(ctx, sess, conf, image)
 	if err != nil {
 		DeleteResouces(conf.Aws, conf.Common)
 		return exitWithError, err
@@ -136,6 +141,8 @@ func Run(ctx context.Context, conf *RunConfig) (exitCode *int64, err error) {
 			return exitWithError, err
 		}
 		outputRunResults(ctx, conf, startedAt, runTaskAt, nil, nil, taskDefInput, runconfig, tasks)
+		deleteResoucesImmediately(conf.Aws, conf.Common)
+
 		if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
 			return exitWithError, nil
 		}
@@ -186,7 +193,7 @@ func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
 	}
 	// Ensure parameters
 	requestID = aws.StringValue(conf.RequestID)
-	if conf.Common.EcsCluster == nil || aws.StringValue(conf.Common.EcsCluster) == "" {
+	if isEmpty(conf.Common.EcsCluster) {
 		conf.Common.EcsCluster = conf.RequestID
 	}
 	if conf.Common.IsDebugMode {
@@ -209,7 +216,6 @@ func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
 		if err != nil {
 			return exitWithError, err
 		}
-		taskDefARN = task.TaskDefinitionArn
 		tasks = append(tasks, task)
 	}
 	tasks, _ = waitForTask(ctx, sess, conf.Common, tasks, func(task *ecs.Task) bool { // nolint
@@ -219,9 +225,13 @@ func Stop(ctx context.Context, conf *StopConfig) (exitCode *int64, err error) {
 
 	// Delete AWS resources
 	if len(all.TaskArns) == len(tasks) {
-		DeleteResouces(conf.Aws, conf.Common)
+		deleteResoucesInTheEnd(conf.Aws, conf.Common)
 	}
 	return aws.Int64(0), nil
+}
+
+func isEmpty(candidate *string) bool {
+	return candidate == nil || aws.StringValue(candidate) == ""
 }
 
 func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Session) (*string, error) {
@@ -239,7 +249,8 @@ func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Sessi
 		if conf.Common.IsDebugMode {
 			lib.PrintJSON(account)
 		}
-		if !strings.Contains(aws.StringValue(imageHost), aws.StringValue(account.Account)) {
+		conf.Aws.accountID = aws.StringValue(account.Account)
+		if !strings.Contains(aws.StringValue(imageHost), conf.Aws.accountID) {
 			imageName = aws.String(fmt.Sprintf(
 				"%s/%s",
 				aws.StringValue(imageHost),
@@ -303,7 +314,7 @@ func ensureAWSResources(ctx context.Context, sess *session.Session, conf *RunCon
 
 	// Ensure cluster existence
 	eg.Go(func() error {
-		if conf.Common.EcsCluster == nil || aws.StringValue(conf.Common.EcsCluster) == "" {
+		if isEmpty(conf.Common.EcsCluster) {
 			conf.Common.EcsCluster = aws.String(requestID)
 		}
 		return createClusterIfNotExist(ctx, sess, conf.Common.EcsCluster)
@@ -420,13 +431,42 @@ func findDefaultSg(ctx context.Context, sess *session.Session, vpc *string) *str
 }
 
 const (
-	ecsExecutionPolicyArn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-	fargate               = "FARGATE"
-	awsVPC                = "awsvpc"
-	awsCWLogs             = "awslogs"
+	ecsManagedExecPolicyArn      = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+	ecsManagedExecPolicyDocument = `{
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "sts:AssumeRole",
+    "Principal": {
+      "Service": "ecs-tasks.amazonaws.com"
+    }
+  }]
+}`
+	kmsCustomKeyID               = "\"arn:aws:kms:%s:%s:key:%s\","
+	ecsPrivateRepoPolicyDocument = `{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": [
+      "kms:Decrypt",
+      "secretsmanager:GetSecretValue"
+    ],
+    "Resource": [
+      %s
+      "%s"
+    ]
+  }]
+}`
+	fargate   = "FARGATE"
+	awsVPC    = "awsvpc"
+	awsCWLogs = "awslogs"
 )
 
-func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig, image *string) (task *string, role *string, taskDefInput *ecs.RegisterTaskDefinitionInput, e error) {
+var (
+	dockerCreds *string
+	credsPolicy *string
+)
+
+func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig, image *string) (taskDefInput *ecs.RegisterTaskDefinitionInput, e error) {
 	eg, _ := errgroup.WithContext(context.Background())
 
 	eg.Go(func() error {
@@ -434,19 +474,27 @@ func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig,
 		return createLogGroup(ctx, sess, conf)
 	})
 	eg.Go(func() (err error) {
+		if !isEmpty(conf.DockerUser) {
+			// Store private registry credentials in AWS SecretsManager
+			dockerCreds, err = createSecret(ctx, sess, conf)
+			if err != nil {
+				return err
+			}
+		}
 		// Make a temporary IAM role
-		role, err = createIAMRole(ctx, sess, conf)
+		var execRoleArn *string
+		execRoleArn, err = createIAMRole(ctx, sess, conf)
 		if err != nil {
 			return err
 		}
 		// Make a temporary task definition
-		taskDefARN, taskDefInput, err = registerTaskDef(ctx, sess, conf, image, aws.StringValue(role))
+		taskDefARN, taskDefInput, err = registerTaskDef(ctx, sess, conf, image, execRoleArn)
 		return
 	})
 	if err := eg.Wait(); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	return taskDefARN, role, taskDefInput, nil
+	return taskDefInput, nil
 }
 
 func createLogGroup(ctx context.Context, sess *session.Session, conf *RunConfig) error {
@@ -456,40 +504,86 @@ func createLogGroup(ctx context.Context, sess *session.Session, conf *RunConfig)
 	return err
 }
 
-func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) (*string, error) {
-	role, err := iam.New(sess).GetRoleWithContext(ctx, &iam.GetRoleInput{
-		RoleName: conf.ExecRoleName,
-	})
-	if err == nil && role.Role != nil {
-		// TODO Ensure ecsExecutionPolicyArn is attached
-		return role.Role.Arn, nil
-	}
-	out, err := iam.New(sess).CreateRoleWithContext(ctx, &iam.CreateRoleInput{
-		RoleName: conf.ExecRoleName,
-		AssumeRolePolicyDocument: aws.String(`{
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": "sts:AssumeRole",
-    "Principal": {
-      "Service": "ecs-tasks.amazonaws.com"
-    }
-  }]
-}`),
-		Path: aws.String("/"),
+func createSecret(ctx context.Context, sess *session.Session, conf *RunConfig) (*string, error) {
+	out, err := sm.New(sess).CreateSecretWithContext(ctx, &sm.CreateSecretInput{
+		Name:     aws.String(requestID),
+		KmsKeyId: conf.KMSCustomKeyID,
+		SecretString: aws.String(fmt.Sprintf(`{
+			"username" : "%s",
+			"password" : "%s"
+		}`,
+			aws.StringValue(conf.DockerUser),
+			aws.StringValue(conf.DockerPassword),
+		)),
 	})
 	if err != nil {
 		return nil, err
 	}
-	if _, err = iam.New(sess).AttachRolePolicyWithContext(ctx, &iam.AttachRolePolicyInput{
-		RoleName:  conf.ExecRoleName,
-		PolicyArn: aws.String(ecsExecutionPolicyArn),
-	}); err != nil {
-		return nil, err
-	}
-	return out.Role.Arn, nil
+	return out.ARN, nil
 }
 
-func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig, image *string, role string) (*string, *ecs.RegisterTaskDefinitionInput, error) {
+func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) (*string, error) {
+	roleName := conf.Common.ExecRoleName
+	role, err := iam.New(sess).GetRoleWithContext(ctx, &iam.GetRoleInput{
+		RoleName: roleName,
+	})
+	var execRoleArn *string
+	if err == nil && role.Role != nil {
+		execRoleArn = role.Role.Arn
+	} else {
+		out, e := iam.New(sess).CreateRoleWithContext(ctx, &iam.CreateRoleInput{
+			RoleName:                 roleName,
+			AssumeRolePolicyDocument: aws.String(ecsManagedExecPolicyDocument),
+			Path:                     aws.String("/"),
+		})
+		if e != nil {
+			return nil, e
+		}
+		execRoleArn = out.Role.Arn
+	}
+	if err = attachPolicy(ctx, sess, roleName, aws.String(ecsManagedExecPolicyArn)); err != nil {
+		return nil, err
+	}
+	// If you'd like to use private repo, the execution role has to have a special policy.
+	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html
+	if !isEmpty(conf.DockerUser) && dockerCreds != nil {
+		keyResource := ""
+		if !isEmpty(conf.KMSCustomKeyID) {
+			keyResource = fmt.Sprintf(
+				kmsCustomKeyID,
+				aws.StringValue(conf.Aws.Region),
+				conf.Aws.accountID,
+				aws.StringValue(conf.KMSCustomKeyID),
+			)
+		}
+		policy, err := iam.New(sess).CreatePolicyWithContext(ctx, &iam.CreatePolicyInput{
+			PolicyName: aws.String(fmt.Sprintf("ecs-custom-%s", requestID)),
+			PolicyDocument: aws.String(fmt.Sprintf(
+				ecsPrivateRepoPolicyDocument,
+				keyResource,
+				aws.StringValue(dockerCreds))),
+			Path: aws.String("/"),
+		})
+		if err != nil {
+			return nil, err
+		}
+		credsPolicy = policy.Policy.Arn
+		if err = attachPolicy(ctx, sess, roleName, credsPolicy); err != nil {
+			return nil, err
+		}
+	}
+	return execRoleArn, nil
+}
+
+func attachPolicy(ctx context.Context, sess *session.Session, roleName, policyArn *string) error {
+	_, err := iam.New(sess).AttachRolePolicyWithContext(ctx, &iam.AttachRolePolicyInput{
+		RoleName:  roleName,
+		PolicyArn: policyArn,
+	})
+	return err
+}
+
+func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig, image, execRoleArn *string) (*string, *ecs.RegisterTaskDefinitionInput, error) {
 	environments := []*ecs.KeyValuePair{}
 	for key, val := range conf.Environments {
 		environments = append(environments, &ecs.KeyValuePair{
@@ -506,7 +600,7 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 	input := ecs.RegisterTaskDefinitionInput{
 		Family:                  conf.TaskDefFamily,
 		RequiresCompatibilities: []*string{aws.String(fargate)},
-		ExecutionRoleArn:        aws.String(role),
+		ExecutionRoleArn:        execRoleArn,
 		TaskRoleArn:             conf.TaskRoleArn,
 		Cpu:                     conf.CPU,
 		Memory:                  conf.Memory,
@@ -531,6 +625,13 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 				},
 			},
 		},
+	}
+	// If you'd like to use private repo, RepositoryCredentials should be specified.
+	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html
+	if !isEmpty(conf.DockerUser) && len(input.ContainerDefinitions) > 0 && dockerCreds != nil {
+		input.ContainerDefinitions[0].RepositoryCredentials = &ecs.RepositoryCredentials{
+			CredentialsParameter: dockerCreds,
+		}
 	}
 	if conf.Common.IsDebugMode {
 		lib.PrintJSON(input)
@@ -658,6 +759,21 @@ func retrieveLogs(ctx context.Context, sess *session.Session, tasks []*ecs.Task)
 
 // DeleteResouces deletes temporary AWS resources
 func DeleteResouces(aws *AwsConfig, conf *CommonConfig) {
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		deleteResoucesImmediately(aws, conf)
+	}()
+	go func() {
+		defer wg.Done()
+		deleteResoucesInTheEnd(aws, conf)
+	}()
+	wg.Wait()
+}
+
+func deleteResoucesImmediately(aws *AwsConfig, conf *CommonConfig) {
 	sess, err := lib.Session(aws.AccessKey, aws.SecretKey, aws.Region, nil)
 	if err != nil {
 		return
@@ -665,11 +781,32 @@ func DeleteResouces(aws *AwsConfig, conf *CommonConfig) {
 	wg := sync.WaitGroup{}
 	wg.Add(3)
 
+	// Delete the private registry creds in Secrets Manager
+	go func() {
+		defer wg.Done()
+		deletePrivateRegistryCreds(sess, conf.IsDebugMode)
+	}()
+	// Delete the IAM policy for private registry creds
+	go func() {
+		defer wg.Done()
+		deletePrivateRegistryRole(sess, conf.ExecRoleName, conf.IsDebugMode)
+	}()
 	// Delete the temporary task definition
 	go func() {
 		defer wg.Done()
 		deregisterTaskDef(sess, conf.IsDebugMode)
 	}()
+	wg.Wait()
+}
+
+func deleteResoucesInTheEnd(aws *AwsConfig, conf *CommonConfig) {
+	sess, err := lib.Session(aws.AccessKey, aws.SecretKey, aws.Region, nil)
+	if err != nil {
+		return
+	}
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
 	// Delete the temporary log group
 	go func() {
 		defer wg.Done()
@@ -681,6 +818,35 @@ func DeleteResouces(aws *AwsConfig, conf *CommonConfig) {
 		deleteECSCluster(sess, conf.IsDebugMode)
 	}()
 	wg.Wait()
+}
+
+func deletePrivateRegistryCreds(sess *session.Session, debug bool) {
+	if dockerCreds == nil {
+		return
+	}
+	if _, err := sm.New(sess).DeleteSecret(&sm.DeleteSecretInput{
+		SecretId:                   dockerCreds,
+		ForceDeleteWithoutRecovery: aws.Bool(true),
+	}); err != nil && debug {
+		lib.PrintJSON(err)
+	}
+}
+
+func deletePrivateRegistryRole(sess *session.Session, roleName *string, debug bool) {
+	if dockerCreds == nil {
+		return
+	}
+	if _, err := iam.New(sess).DetachRolePolicy(&iam.DetachRolePolicyInput{
+		RoleName:  roleName,
+		PolicyArn: credsPolicy,
+	}); err != nil && debug {
+		lib.PrintJSON(err)
+	}
+	if _, err := iam.New(sess).DeletePolicy(&iam.DeletePolicyInput{
+		PolicyArn: credsPolicy,
+	}); err != nil && debug {
+		lib.PrintJSON(err)
+	}
 }
 
 func deregisterTaskDef(sess *session.Session, debug bool) {
@@ -740,6 +906,7 @@ func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt
 	if aws.BoolValue(conf.Common.ExtendedOutput) {
 		timelines := []map[string]string{}
 		resources := []map[string]interface{}{}
+		exitcodes := []map[string]interface{}{}
 		if len(tasks) > 0 {
 			for _, task := range tasks {
 				resource := map[string]interface{}{}
@@ -751,16 +918,16 @@ func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt
 				resource["LogGroup"] = aws.StringValue(container.LogConfiguration.Options["awslogs-group"])
 				resource["PublicIP"] = retrievePublicIP(ctx, conf.Aws, task, conf.Common.IsDebugMode)
 
-				containers := []map[string]string{}
+				containers := []map[string]interface{}{}
 				taskID := ""
 				matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
 				if len(matched) > 0 && len(matched[0]) > 1 {
 					taskID = matched[0][1]
 				}
-				for _, c := range task.Containers {
-					containers = append(containers, map[string]string{
-						"ContainerArn": aws.StringValue(c.ContainerArn),
-						"LogStream":    fmt.Sprintf("fargate/app/%s", taskID),
+				for _, container := range task.Containers {
+					containers = append(containers, map[string]interface{}{
+						"ContainerArn": aws.StringValue(container.ContainerArn),
+						"LogStream":    fmt.Sprintf("fargate/%s/%s", aws.StringValue(container.Name), taskID),
 					})
 				}
 				resource["Containers"] = containers
@@ -778,6 +945,24 @@ func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt
 				timeline["8"] = fmt.Sprintf("AppRetrievedLogsAt:        %s", rfc3339(aws.TimeValue(logsAt)))
 				timeline["9"] = fmt.Sprintf("AppFinishedAt:             %s", rfc3339(time.Now()))
 				timelines = append(timelines, timeline)
+
+				exitcode := map[string]interface{}{
+					"TaskLastStatus":    aws.StringValue(task.LastStatus),
+					"TaskHealthStatus":  aws.StringValue(task.HealthStatus),
+					"TaskStopCode":      aws.StringValue(task.StopCode),
+					"TaskStoppedReason": aws.StringValue(task.StoppedReason),
+				}
+				containers = []map[string]interface{}{}
+				for _, container := range task.Containers {
+					containers = append(containers, map[string]interface{}{
+						"ExitCode":     aws.Int64Value(container.ExitCode),
+						"Reason":       aws.StringValue(container.Reason),
+						"LastStatus":   aws.StringValue(container.LastStatus),
+						"HealthStatus": aws.StringValue(container.HealthStatus),
+					})
+				}
+				exitcode["Containers"] = containers
+				exitcodes = append(exitcodes, exitcode)
 			}
 		}
 		result["meta"] = map[string]interface{}{
@@ -785,6 +970,7 @@ func outputRunResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt
 			"2.runconfig": runconfig,
 			"3.resources": resources,
 			"4.timeline":  timelines,
+			"5.exitcodes": exitcodes,
 		}
 	}
 	lib.PrintJSON(result)
@@ -808,6 +994,7 @@ func outputStopResults(ctx context.Context, conf *StopConfig, logs map[string][]
 	if aws.BoolValue(conf.Common.ExtendedOutput) {
 		timelines := []map[string]string{}
 		resources := []map[string]interface{}{}
+		exitcodes := []map[string]interface{}{}
 		if len(tasks) > 0 {
 			for _, task := range tasks {
 				resource := map[string]interface{}{}
@@ -815,16 +1002,16 @@ func outputStopResults(ctx context.Context, conf *StopConfig, logs map[string][]
 				resource["TaskDefinitionArn"] = aws.StringValue(task.TaskDefinitionArn)
 				resource["TaskArn"] = aws.StringValue(task.TaskArn)
 
-				containers := []map[string]string{}
+				containers := []map[string]interface{}{}
 				taskID := ""
 				matched := regTaskID.FindAllStringSubmatch(aws.StringValue(task.TaskArn), -1)
 				if len(matched) > 0 && len(matched[0]) > 1 {
 					taskID = matched[0][1]
 				}
-				for _, c := range task.Containers {
-					containers = append(containers, map[string]string{
-						"ContainerArn": aws.StringValue(c.ContainerArn),
-						"LogStream":    fmt.Sprintf("fargate/app/%s", taskID),
+				for _, container := range task.Containers {
+					containers = append(containers, map[string]interface{}{
+						"ContainerArn": aws.StringValue(container.ContainerArn),
+						"LogStream":    fmt.Sprintf("fargate/%s/%s", aws.StringValue(container.Name), taskID),
 					})
 				}
 				resource["Containers"] = containers
@@ -839,11 +1026,30 @@ func outputStopResults(ctx context.Context, conf *StopConfig, logs map[string][]
 				timeline["6"] = fmt.Sprintf("FargateStoppedAt:          %s", toStr(task.StoppedAt))
 				timeline["7"] = fmt.Sprintf("AppFinishedAt:             %s", rfc3339(time.Now()))
 				timelines = append(timelines, timeline)
+
+				exitcode := map[string]interface{}{
+					"TaskLastStatus":    aws.StringValue(task.LastStatus),
+					"TaskHealthStatus":  aws.StringValue(task.HealthStatus),
+					"TaskStopCode":      aws.StringValue(task.StopCode),
+					"TaskStoppedReason": aws.StringValue(task.StoppedReason),
+				}
+				containers = []map[string]interface{}{}
+				for _, container := range task.Containers {
+					containers = append(containers, map[string]interface{}{
+						"ExitCode":     aws.Int64Value(container.ExitCode),
+						"Reason":       aws.StringValue(container.Reason),
+						"LastStatus":   aws.StringValue(container.LastStatus),
+						"HealthStatus": aws.StringValue(container.HealthStatus),
+					})
+				}
+				exitcode["Containers"] = containers
+				exitcodes = append(exitcodes, exitcode)
 			}
 		}
 		result["meta"] = map[string]interface{}{
 			"1.resources": resources,
 			"2.timeline":  timelines,
+			"3.exitcodes": exitcodes,
 		}
 	}
 	lib.PrintJSON(result)

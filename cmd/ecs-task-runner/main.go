@@ -50,6 +50,8 @@ func main() {
 	common := &commands.CommonConfig{}
 	common.EcsCluster = app.Flag("cluster", "Amazon ECS cluster name.").
 		Short('c').Envar("ECS_CLUSTER").String()
+	common.ExecRoleName = app.Flag("exec-role-name", "Name of an execution role for the task.").
+		Envar("EXEC_ROLE_NAME").Default("ecs-task-runner").String()
 	common.Timeout = app.Flag("timeout", "Timeout minutes for the task.").
 		Short('t').Envar("TASK_TIMEOUT").Default("30").Int64()
 	common.ExtendedOutput = app.Flag("extended-output", "If it's True, meta data returns as well.").
@@ -87,10 +89,14 @@ func main() {
 		Envar("MEMORY").Default("512").String()
 	runconf.TaskRoleArn = run.Flag("task-role-arn", "ARN of an IAM Role for the task.").
 		Envar("TASK_ROLE_ARN").String()
-	runconf.ExecRoleName = run.Flag("exec-role-name", "Name of an execution role for the task.").
-		Envar("EXEC_ROLE_NAME").Default("ecs-task-runner").String()
 	runconf.NumberOfTasks = run.Flag("number", "Number of tasks.").
 		Short('n').Envar("NUMBER").Default("1").Int64()
+	runconf.KMSCustomKeyID = run.Flag("kms-key-id", "KMS custom key ID for SecretsManager decryption.").
+		Envar("KMS_CUSTOMKEY_ID").String()
+	runconf.DockerUser = run.Flag("user", "PrivateRegistry Username .").
+		Envar("PRIVATE_REGISTRY_USER").String()
+	runconf.DockerPassword = run.Flag("password", "PrivateRegistry Password.").
+		Envar("PRIVATE_REGISTRY_PASSWORD").String()
 	runconf.AssignPublicIP = run.Flag("assign-pub-ip", "If it's True, it assigns public IP.").
 		Envar("ASSIGN_PUBLIC_IP").Default("true").Bool()
 	runconf.Asynchronous = run.Flag("async", "If it's True, the app does not wait for the job done.").
