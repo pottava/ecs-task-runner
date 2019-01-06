@@ -10,10 +10,10 @@ import (
 )
 
 // CreateSecret creates a secret
-func CreateSecret(ctx context.Context, sess *session.Session, name, kmsCustomKeyID, secret *string) (*string, error) {
+func CreateSecret(ctx context.Context, sess *session.Session, name, kmsKeyID, secret *string) (*string, error) {
 	out, err := sm.New(sess).CreateSecretWithContext(ctx, &sm.CreateSecretInput{
 		Name:         name,
-		KmsKeyId:     kmsCustomKeyID,
+		KmsKeyId:     kmsKeyID,
 		SecretString: secret,
 	})
 	if err != nil {

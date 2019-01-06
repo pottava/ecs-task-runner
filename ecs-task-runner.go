@@ -325,7 +325,7 @@ const (
     }
   }]
 }`
-	kmsCustomKeyID               = "\"arn:aws:kms:%s:%s:key:%s\","
+	kmsCustomKeyID               = "\"arn:aws:kms:%s:%s:key/%s\","
 	ecsPrivateRepoPolicyDocument = `{
   "Version": "2012-10-17",
   "Statement": [{
@@ -416,21 +416,12 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) 
 	// If you'd like to use private repo, the execution role has to have a special policy.
 	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html
 	if !isEmpty(conf.DockerUser) && dockerCreds != nil {
-		keyResource := ""
-		if !isEmpty(conf.KMSCustomKeyID) {
-			keyResource = fmt.Sprintf(
-				kmsCustomKeyID,
-				aws.StringValue(conf.Aws.Region),
-				conf.Aws.accountID,
-				aws.StringValue(conf.KMSCustomKeyID),
-			)
-		}
 		policy, err := lib.CreatePolicy(
 			ctx, sess,
 			fmt.Sprintf("ecs-custom-%s", requestID),
 			fmt.Sprintf(
 				ecsPrivateRepoPolicyDocument,
-				keyResource,
+				getKeyResourceName(ctx, sess, conf),
 				aws.StringValue(dockerCreds)))
 		if err != nil {
 			return nil, err
@@ -441,6 +432,32 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) 
 		}
 	}
 	return execRoleArn, nil
+}
+
+func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunConfig) string {
+	keyID := aws.StringValue(conf.KMSCustomKeyID)
+	if keyID == "" {
+		return ""
+	}
+	if strings.HasPrefix(keyID, "arn:aws:kms:") {
+		return fmt.Sprintf("\"%s\",", keyID)
+	}
+	if conf.Aws.accountID == "" {
+		account, err := sts.New(sess).GetCallerIdentityWithContext(ctx, nil)
+		if err != nil {
+			return ""
+		}
+		conf.Aws.accountID = aws.StringValue(account.Account)
+	}
+	if _, check := uuid.Parse(keyID); check == nil {
+		result = fmt.Sprintf(
+			kmsCustomKeyID,
+			aws.StringValue(conf.Aws.Region),
+			conf.Aws.accountID,
+			keyID,
+		)
+	}
+	return ""
 }
 
 func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig, image, execRoleArn *string) (*string, *ecs.RegisterTaskDefinitionInput, error) {
