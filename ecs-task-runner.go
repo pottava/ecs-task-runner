@@ -338,7 +338,7 @@ const (
     }
   }]
 }`
-	kmsCustomKeyID               = "\"arn:aws:kms:%s:%s:key/%s\","
+	kmsCustomKeyID               = "\"arn:aws:kms:%s:%s:%s\","
 	ecsPrivateRepoPolicyDocument = `{
   "Version": "2012-10-17",
   "Statement": [{
@@ -467,9 +467,18 @@ func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunCon
 			kmsCustomKeyID,
 			aws.StringValue(conf.Aws.Region),
 			conf.Aws.accountID,
-			keyID,
+			"key/"+keyID,
 		)
 	}
+	// FIXME it doesn't work if you use alias
+	// if strings.HasPrefix(keyID, "alias/") {
+	// 	return fmt.Sprintf(
+	// 		kmsCustomKeyID,
+	// 		aws.StringValue(conf.Aws.Region),
+	// 		conf.Aws.accountID,
+	// 		keyID,
+	// 	)
+	// }
 	return ""
 }
 
