@@ -223,7 +223,7 @@ func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Sessi
 			))
 			imageHost = aws.String(fmt.Sprintf(
 				"%s.dkr.ecr.%s.amazonaws.com",
-				account,
+				conf.Aws.accountID,
 				aws.StringValue(conf.Aws.Region),
 			))
 		}
