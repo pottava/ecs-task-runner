@@ -60,6 +60,9 @@ func Run(ctx context.Context, conf *RunConfig) (output *Output, err error) {
 	if err = eg.Wait(); err != nil {
 		return &Output{ExitCode: exitWithError}, err
 	}
+	// Check if the environment variables contain sensitive data
+	conf.withParamStore = aws.Bool(containsSensitiveData(ctx, sess, conf))
+
 	// Create AWS resources
 	var taskDefInput *ecs.RegisterTaskDefinitionInput
 	taskDefInput, err = createResouces(ctx, sess, conf, image)
@@ -214,8 +217,8 @@ func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Sessi
 		if conf.Common.IsDebugMode {
 			log.PrintJSON(account)
 		}
-		conf.Aws.accountID = aws.StringValue(account.Account)
-		if !strings.Contains(aws.StringValue(imageHost), conf.Aws.accountID) {
+		accountID := getAccountID(ctx, sess, conf)
+		if !strings.Contains(aws.StringValue(imageHost), accountID) {
 			imageName = aws.String(fmt.Sprintf(
 				"%s/%s",
 				aws.StringValue(imageHost),
@@ -223,7 +226,7 @@ func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Sessi
 			))
 			imageHost = aws.String(fmt.Sprintf(
 				"%s.dkr.ecr.%s.amazonaws.com",
-				conf.Aws.accountID,
+				accountID,
 				aws.StringValue(conf.Aws.Region),
 			))
 		}
@@ -327,6 +330,20 @@ func ensureAWSResources(ctx context.Context, sess *session.Session, conf *RunCon
 	return eg.Wait()
 }
 
+func containsSensitiveData(ctx context.Context, sess *session.Session, conf *RunConfig) bool {
+	ssmParameterKey := fmt.Sprintf(
+		"arn:aws:ssm:%s:%s:parameter/",
+		aws.StringValue(conf.Aws.Region),
+		getAccountID(ctx, sess, conf),
+	)
+	for _, val := range conf.Environments {
+		if strings.HasPrefix(aws.StringValue(val), ssmParameterKey) {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	ecsManagedExecPolicyArn      = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 	ecsManagedExecPolicyDocument = `{
@@ -338,18 +355,20 @@ const (
     }
   }]
 }`
-	kmsCustomKeyID               = "\"arn:aws:kms:%s:%s:%s\","
-	ecsPrivateRepoPolicyDocument = `{
+	kmsCustomKeyID             = "\"arn:aws:kms:%s:%s:%s\","
+	ecsGetParamsPolicyDocument = `{
   "Version": "2012-10-17",
   "Statement": [{
     "Effect": "Allow",
     "Action": [
       "kms:Decrypt",
+      "ssm:GetParameters",
       "secretsmanager:GetSecretValue"
     ],
     "Resource": [
       %s
-      "%s"
+      "arn:aws:ssm:%s:%s:parameter/*",
+	  "arn:aws:secretsmanager:%s:%s:secret:*"
     ]
   }]
 }`
@@ -428,14 +447,21 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) 
 	}
 	// If you'd like to use private repo, the execution role has to have a special policy.
 	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html
-	if !isEmpty(conf.DockerUser) && dockerCreds != nil {
+	// Or if you just want to specify sensitive data with AWS Systems Manager Parameter Store
+	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/specifying-sensitive-data.html
+	if (!isEmpty(conf.DockerUser) && dockerCreds != nil) || aws.BoolValue(conf.withParamStore) {
+		accountID := getAccountID(ctx, sess, conf)
 		policy, err := lib.CreatePolicy(
 			ctx, sess,
 			fmt.Sprintf("ecs-custom-%s", requestID),
 			fmt.Sprintf(
-				ecsPrivateRepoPolicyDocument,
+				ecsGetParamsPolicyDocument,
 				getKeyResourceName(ctx, sess, conf),
-				aws.StringValue(dockerCreds)))
+				aws.StringValue(conf.Aws.Region),
+				accountID,
+				aws.StringValue(conf.Aws.Region),
+				accountID,
+			))
 		if err != nil {
 			return nil, err
 		}
@@ -447,6 +473,17 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) 
 	return execRoleArn, nil
 }
 
+func getAccountID(ctx context.Context, sess *session.Session, conf *RunConfig) string {
+	if conf.Aws.accountID == "" {
+		account, err := sts.New(sess).GetCallerIdentityWithContext(ctx, nil)
+		if err != nil {
+			return ""
+		}
+		conf.Aws.accountID = aws.StringValue(account.Account)
+	}
+	return conf.Aws.accountID
+}
+
 func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunConfig) string {
 	keyID := aws.StringValue(conf.KMSCustomKeyID)
 	if keyID == "" {
@@ -455,18 +492,12 @@ func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunCon
 	if strings.HasPrefix(keyID, "arn:aws:kms:") {
 		return fmt.Sprintf("\"%s\",", keyID)
 	}
-	if conf.Aws.accountID == "" {
-		account, err := sts.New(sess).GetCallerIdentityWithContext(ctx, nil)
-		if err != nil {
-			return ""
-		}
-		conf.Aws.accountID = aws.StringValue(account.Account)
-	}
+	accountID := getAccountID(ctx, sess, conf)
 	if _, check := uuid.Parse(keyID); check == nil {
 		return fmt.Sprintf(
 			kmsCustomKeyID,
 			aws.StringValue(conf.Aws.Region),
-			conf.Aws.accountID,
+			accountID,
 			"key/"+keyID,
 		)
 	}
@@ -475,7 +506,7 @@ func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunCon
 	// 	return fmt.Sprintf(
 	// 		kmsCustomKeyID,
 	// 		aws.StringValue(conf.Aws.Region),
-	// 		conf.Aws.accountID,
+	// 		accountID,
 	// 		keyID,
 	// 	)
 	// }
@@ -483,12 +514,25 @@ func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunCon
 }
 
 func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig, image, execRoleArn *string) (*string, *ecs.RegisterTaskDefinitionInput, error) {
+	ssmParameterKey := fmt.Sprintf(
+		"arn:aws:ssm:%s:%s:parameter/",
+		aws.StringValue(conf.Aws.Region),
+		getAccountID(ctx, sess, conf),
+	)
 	environments := []*ecs.KeyValuePair{}
+	secrets := []*ecs.Secret{}
 	for key, val := range conf.Environments {
-		environments = append(environments, &ecs.KeyValuePair{
-			Name:  aws.String(key),
-			Value: val,
-		})
+		if strings.HasPrefix(aws.StringValue(val), ssmParameterKey) {
+			secrets = append(secrets, &ecs.Secret{
+				Name:      aws.String(key),
+				ValueFrom: val,
+			})
+		} else {
+			environments = append(environments, &ecs.KeyValuePair{
+				Name:  aws.String(key),
+				Value: val,
+			})
+		}
 	}
 	ports := []*ecs.PortMapping{}
 	for _, port := range conf.Ports {
@@ -511,6 +555,7 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 				EntryPoint:   conf.Entrypoint,
 				Command:      conf.Commands,
 				Environment:  environments,
+				Secrets:      secrets,
 				PortMappings: ports,
 				DockerLabels: conf.Labels,
 				Essential:    aws.Bool(true),

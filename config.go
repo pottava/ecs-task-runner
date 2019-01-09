@@ -35,6 +35,7 @@ type RunConfig struct {
 	Memory         *string
 	TaskRoleArn    *string
 	NumberOfTasks  *int64
+	withParamStore *bool
 	KMSCustomKeyID *string
 	DockerUser     *string
 	DockerPassword *string
