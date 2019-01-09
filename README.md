@@ -5,29 +5,28 @@
 [![pottava/ecs-task-runner](http://dockeri.co/image/pottava/ecs-task-runner)](https://hub.docker.com/r/pottava/ecs-task-runner/)
 
 Supported tags and respective `Dockerfile` links:  
-・latest ([versions/2.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.2/Dockerfile))  
+・latest ([versions/2.3/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.3/Dockerfile))  
+・2.3 ([versions/2.3/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.3/Dockerfile))  
 ・2.2 ([versions/2.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.2/Dockerfile))  
-・2 ([versions/2.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.2/Dockerfile))  
+・2 ([versions/2.3/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.3/Dockerfile))  
 ・1 ([versions/1.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/1.2/Dockerfile))  
-
 
 ## Description
 
 This is a synchronous task runner for AWS Fargate. It runs a docker container on Fargate and waits for its done. Then it returns its standard output logs from CloudWatch Logs. All resources we need are created temporarily and remove them after the task finished.
-
 
 ## Installation
 
 curl (macOS):
 
 ```
-$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.2/ecs-task-runner_darwin_amd64 && chmod +x ecs-task-runner
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.3/ecs-task-runner_darwin_amd64 && chmod +x ecs-task-runner
 ```
 
 curl (Linux):
 
 ```
-$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.2/ecs-task-runner_linux_amd64 && chmod +x ecs-task-runner
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.3/ecs-task-runner_linux_amd64 && chmod +x ecs-task-runner
 ```
 
 go:
@@ -41,7 +40,6 @@ docker:
 ```
 $ docker pull pottava/ecs-task-runner
 ```
-
 
 ## Parameters
 
@@ -88,7 +86,6 @@ Environment Variables     | Argument        | Description                     | 
 REQUEST_ID                |                 | Resources ID to be stopped      | *        |
 TASK_ARN                  | task-arn        | Task ARNs to be stopped         |          |
 
-
 ## Samples
 
 ```console
@@ -134,7 +131,7 @@ $ ecs-task-runner run nginx --async -p 80 --security-groups public-80
 }
 ```
 
-To stop the tasks:
+To stop the asynchronous tasks:
 
 ```console
 $ ecs-task-runner stop ecs-task-runner-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
@@ -144,7 +141,6 @@ $ ecs-task-runner stop ecs-task-runner-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
   ]
 }
 ```
-
 
 ## Usage
 
@@ -157,17 +153,43 @@ $ ecs-task-runner -a AKIAIOSFODNN7EXAMPLE -s wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMP
 With environment variables:
 
 ```console
-$ export DOCKER_IMAGE=sample/image
 $ export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
 $ export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-$ ecs-task-runner run
+$ ecs-task-runner run sample/image
 ```
 
-With docker container:
+With ECR shortened image name:
 
 ```console
-$ export DOCKER_IMAGE=sample/image
 $ export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
 $ export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-$ docker run --rm -e DOCKER_IMAGE -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY pottava/ecs-task-runner
+$ ecs-task-runner run --force-ecr my-ecr/image
+```
+
+With a private registory:
+
+```console
+$ export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+$ export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+$ export PRIVATE_REGISTRY_USER=user
+$ export PRIVATE_REGISTRY_PASSWORD=password
+$ ecs-task-runner run sample/secret
+```
+
+With the docker container:
+
+```console
+$ export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+$ export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+$ docker run --rm -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY pottava/ecs-task-runner sample/image
+```
+
+## Troubleshooting
+
+If the command returns non-zero exit code, you can try `--extended-output` to analyze the cause of failure.
+
+```console
+$ export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+$ export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+$ ecs-task-runner run sample/image --extended-output
 ```
