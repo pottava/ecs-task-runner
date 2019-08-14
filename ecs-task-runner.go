@@ -570,9 +570,7 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 			},
 		},
 	}
-	// If you'd like to use private repo, RepositoryCredentials should be specified.
-	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html
-	if !isEmpty(conf.DockerUser) && len(input.ContainerDefinitions) > 0 && dockerCreds != nil {
+	if !isEmpty(conf.DockerUser) && dockerCreds != nil {
 		input.ContainerDefinitions[0].RepositoryCredentials = &ecs.RepositoryCredentials{
 			CredentialsParameter: dockerCreds,
 		}
@@ -700,7 +698,7 @@ func deleteResoucesImmediately(aws *AwsConfig, conf *CommonConfig) {
 	// Delete the IAM policy for private registry creds
 	go func() {
 		defer wg.Done()
-		if dockerCreds != nil {
+		if credsPolicy != nil {
 			lib.DeletePolicy(sess, conf.ExecRoleName, credsPolicy, conf.IsDebugMode)
 		}
 	}()
