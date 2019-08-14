@@ -6,7 +6,7 @@ run:
 	@docker run --rm -it -v "${GOPATH}"/src:/go/src \
 			-w /go/src/github.com/pottava/ecs-task-runner \
 			-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
-			golang:1.11.4-alpine3.8 \
+			golang:1.12.7-alpine3.10 \
 			go run cmd/ecs-task-runner/main.go \
 			run alpine --entrypoint env --extended-output
 

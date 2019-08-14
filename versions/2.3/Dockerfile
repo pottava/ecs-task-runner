@@ -1,7 +1,7 @@
 # ECS Task Runner v2.3
 # docker run --rm -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY pottava/ecs-task-runner alpine --entrypoint env
 
-FROM golang:1.11.4-alpine3.8 AS build-env
+FROM golang:1.12.7-alpine3.10 AS build-env
 RUN apk --no-cache add gcc musl-dev git
 RUN go get -u github.com/golang/dep/...
 WORKDIR /go/src/github.com/golang/dep
@@ -17,7 +17,7 @@ RUN githash=$(git rev-parse --short HEAD 2>/dev/null) \
     && go build -ldflags "-s -w -X main.date=$(date +%Y-%m-%d --utc) -X main.version=${APP_VERSION} -X main.commit=${githash}"
 RUN mv /go/src/github.com/pottava/ecs-task-runner/cmd/ecs-task-runner/ecs-task-runner /
 
-FROM alpine:3.8
+FROM alpine:3.10
 RUN apk add --no-cache ca-certificates
 COPY --from=build-env /ecs-task-runner /ecs-task-runner
 ENTRYPOINT ["/ecs-task-runner", "run"]
