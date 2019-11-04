@@ -17,9 +17,9 @@ import (
 
 // for compile flags
 var (
-	version = "dev"
-	commit  string
-	date    string
+	ver    = "dev"
+	commit string
+	date   string
 )
 
 func main() {
@@ -33,10 +33,10 @@ func main() {
 	}()
 
 	app := cli.New("ecs-rask-runner", "A synchronous task runner AWS Fargate on Amazon ECS")
-	if len(version) > 0 && len(date) > 0 {
-		app.Version(fmt.Sprintf("%s-%s (built at %s)", version, commit, date))
+	if len(commit) > 0 && len(date) > 0 {
+		app.Version(fmt.Sprintf("%s-%s (built at %s)", ver, commit, date))
 	} else {
-		app.Version(version)
+		app.Version(ver)
 	}
 	// global flags
 	awsconf := &commands.AwsConfig{}
@@ -44,7 +44,7 @@ func main() {
 		Short('a').Envar("AWS_ACCESS_KEY_ID").Required().String()
 	awsconf.SecretKey = app.Flag("secret-key", "AWS secret access key.").
 		Short('s').Envar("AWS_SECRET_ACCESS_KEY").Required().String()
-	awsconf.Region = app.Flag("region", "AWS region.").
+	awsconf.Region = app.Flag("region", "AWS default region.").
 		Short('r').Envar("AWS_DEFAULT_REGION").Default("us-east-1").String()
 
 	common := &commands.CommonConfig{}

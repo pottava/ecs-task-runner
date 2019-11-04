@@ -3,33 +3,34 @@ jobs:
   test:
     working_directory: /go/src/github.com/pottava/ecs-task-runner
     docker:
-      - image: circleci/golang:1.12.7
+      - image: circleci/golang:1.13.4
     steps:
       - checkout
-      - run: go get -u github.com/golang/dep/...
-      - run: dep ensure
-      - run: curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s v1.12.5
+      - run: go mod download
+      - run: go mod verify
+      - run: curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s v1.20.1
       - run:
           name: Run tests
           command: |
-            ./bin/golangci-lint run --config .golangci.yml
+            # Circle CI kills this process because it requires a lot of memory
+            # ./bin/golangci-lint run --config .golangci.yml
             go test -cover -bench -benchmem $(go list ./...)
       - run: go run cmd/ecs-task-runner/main.go run alpine --entrypoint env --extended-output
   build:
     working_directory: /go/src/github.com/pottava/ecs-task-runner
     docker:
-      - image: circleci/golang:1.12.7
+      - image: circleci/golang:1.13.4
     steps:
       - checkout
-      - run: go get -u github.com/golang/dep/...
-      - run: dep ensure
+      - run: go mod download
+      - run: go mod verify
       - run: go get github.com/mitchellh/gox
       - run: go get github.com/tcnksm/ghr
       - run:
           name: Build and release
           command: |
             cd cmd/ecs-task-runner/
-            gox --osarch "linux/amd64 darwin/amd64 windows/amd64" -ldflags "-s -w -X main.date=$(date +%Y-%m-%d --utc) -X main.version=${CIRCLE_TAG} -X main.commit=${CIRCLE_SHA1:0:7}" -output "${GOPATH}/pkg/${CIRCLE_PROJECT_REPONAME}_{{.OS}}_{{.Arch}}"
+            gox --osarch "linux/amd64 darwin/amd64 windows/amd64" -ldflags "-s -w -X main.version=${CIRCLE_TAG} -X main.commit=${CIRCLE_SHA1:0:7} -X main.date=$(date +%Y-%m-%d --utc)" -output "${GOPATH}/pkg/${CIRCLE_PROJECT_REPONAME}_{{.OS}}_{{.Arch}}"
             ghr -t $GITHUB_TOKEN -u $CIRCLE_PROJECT_USERNAME -r $CIRCLE_PROJECT_REPONAME --replace ${CIRCLE_TAG} $GOPATH/pkg/
 
 workflows:
