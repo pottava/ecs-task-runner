@@ -38,7 +38,7 @@ type OutputAsyncTask struct {
 	PublicIP string `json:"PublicIP"`
 }
 
-// OutputLogs are the set of logs
+// OutputMeta are the set of logs
 type OutputMeta struct {
 	TaskDef   *ecs.RegisterTaskDefinitionInput `json:"1.taskdef,omitempty"`
 	RunConfig *ecs.RunTaskInput                `json:"2.runconfig,omitempty"`

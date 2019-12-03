@@ -65,7 +65,7 @@ func Run(ctx context.Context, conf *RunConfig) (output *Output, err error) {
 
 	// Create AWS resources
 	var taskDefInput *ecs.RegisterTaskDefinitionInput
-	taskDefInput, err = createResouces(ctx, sess, conf, image)
+	taskDefInput, err = createResouces(ctx, sess, conf, image, startedAt)
 	if err != nil {
 		DeleteResouces(conf.Aws, conf.Common)
 		return &Output{ExitCode: exitWithError}, err
@@ -383,7 +383,7 @@ var (
 	credsPolicy *string
 )
 
-func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig, image *string) (taskDefInput *ecs.RegisterTaskDefinitionInput, e error) {
+func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig, image *string, startedAt time.Time) (taskDefInput *ecs.RegisterTaskDefinitionInput, e error) {
 	eg, _ := errgroup.WithContext(context.Background())
 
 	eg.Go(func() error {
@@ -414,7 +414,7 @@ func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig,
 			return err
 		}
 		// Make a temporary task definition
-		taskDefARN, taskDefInput, err = registerTaskDef(ctx, sess, conf, image, execRoleArn)
+		taskDefARN, taskDefInput, err = registerTaskDef(ctx, sess, conf, image, execRoleArn, startedAt)
 		return
 	})
 	if err := eg.Wait(); err != nil {
@@ -513,7 +513,7 @@ func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunCon
 	return ""
 }
 
-func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig, image, execRoleArn *string) (*string, *ecs.RegisterTaskDefinitionInput, error) {
+func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig, image, execRoleArn *string, startedAt time.Time) (*string, *ecs.RegisterTaskDefinitionInput, error) {
 	ssmParameterKey := fmt.Sprintf(
 		"arn:aws:ssm:%s:%s:parameter/",
 		aws.StringValue(conf.Aws.Region),
@@ -540,6 +540,37 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 			ContainerPort: port,
 		})
 	}
+	labels := map[string]*string{}
+	labels["com.github.pottava.ecs-task-runner.version"] = aws.String(conf.Common.AppVersion)
+	labels["com.github.pottava.ecs-task-runner.started"] = aws.String(rfc3339(startedAt))
+	for key, value := range conf.Labels {
+		labels[key] = value
+	}
+	containerDef := &ecs.ContainerDefinition{
+		Name:         aws.String("app"),
+		Image:        image,
+		EntryPoint:   conf.Entrypoint,
+		Command:      conf.Commands,
+		Environment:  environments,
+		Secrets:      secrets,
+		PortMappings: ports,
+		DockerLabels: labels,
+		Essential:    aws.Bool(true),
+		LogConfiguration: &ecs.LogConfiguration{
+			LogDriver: aws.String(awsCWLogs),
+			Options: map[string]*string{
+				"awslogs-region":        conf.Aws.Region,
+				"awslogs-group":         aws.String(logGroup),
+				"awslogs-stream-prefix": aws.String(logPrefix),
+			},
+		},
+		ReadonlyRootFilesystem: conf.ReadOnlyRootFS,
+	}
+	if !isEmpty(conf.DockerUser) && dockerCreds != nil {
+		containerDef.RepositoryCredentials = &ecs.RepositoryCredentials{
+			CredentialsParameter: dockerCreds,
+		}
+	}
 	input := ecs.RegisterTaskDefinitionInput{
 		Family:                  conf.TaskDefFamily,
 		RequiresCompatibilities: []*string{aws.String(fargate)},
@@ -548,32 +579,7 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 		Cpu:                     conf.CPU,
 		Memory:                  conf.Memory,
 		NetworkMode:             aws.String(awsVPC),
-		ContainerDefinitions: []*ecs.ContainerDefinition{
-			&ecs.ContainerDefinition{
-				Name:         aws.String("app"),
-				Image:        image,
-				EntryPoint:   conf.Entrypoint,
-				Command:      conf.Commands,
-				Environment:  environments,
-				Secrets:      secrets,
-				PortMappings: ports,
-				DockerLabels: conf.Labels,
-				Essential:    aws.Bool(true),
-				LogConfiguration: &ecs.LogConfiguration{
-					LogDriver: aws.String(awsCWLogs),
-					Options: map[string]*string{
-						"awslogs-region":        conf.Aws.Region,
-						"awslogs-group":         aws.String(logGroup),
-						"awslogs-stream-prefix": aws.String(logPrefix),
-					},
-				},
-			},
-		},
-	}
-	if !isEmpty(conf.DockerUser) && dockerCreds != nil {
-		input.ContainerDefinitions[0].RepositoryCredentials = &ecs.RepositoryCredentials{
-			CredentialsParameter: dockerCreds,
-		}
+		ContainerDefinitions:    []*ecs.ContainerDefinition{containerDef},
 	}
 	if conf.Common.IsDebugMode {
 		log.PrintJSON(input)

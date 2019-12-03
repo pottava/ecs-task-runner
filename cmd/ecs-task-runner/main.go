@@ -48,6 +48,10 @@ func main() {
 		Short('r').Envar("AWS_DEFAULT_REGION").Default("us-east-1").String()
 
 	common := &commands.CommonConfig{}
+	common.AppVersion = ver
+	if len(commit) > 0 && len(date) > 0 {
+		common.AppVersion = fmt.Sprintf("%s-%s (built at %s)", ver, commit, date)
+	}
 	common.EcsCluster = app.Flag("cluster", "Amazon ECS cluster name.").
 		Short('c').Envar("ECS_CLUSTER").String()
 	common.ExecRoleName = app.Flag("exec-role-name", "Name of an execution role for the task.").
@@ -99,6 +103,8 @@ func main() {
 		Envar("PRIVATE_REGISTRY_PASSWORD").String()
 	runconf.AssignPublicIP = run.Flag("assign-pub-ip", "If it's True, it assigns public IP.").
 		Envar("ASSIGN_PUBLIC_IP").Default("true").Bool()
+	runconf.ReadOnlyRootFS = run.Flag("readonly-rootfs", "If it's True, it makes the Root-FS READ only.").
+		Envar("READONLY_ROOOTFS").Default("false").Bool()
 	runconf.Asynchronous = run.Flag("async", "If it's True, the app does not wait for the job done.").
 		Envar("ASYNC").Default("false").Bool()
 

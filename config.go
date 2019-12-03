@@ -10,6 +10,7 @@ type AwsConfig struct {
 
 // CommonConfig is set of common configurations
 type CommonConfig struct {
+	AppVersion     string
 	EcsCluster     *string
 	ExecRoleName   *string
 	Timeout        *int64
@@ -40,6 +41,7 @@ type RunConfig struct {
 	DockerUser     *string
 	DockerPassword *string
 	AssignPublicIP *bool
+	ReadOnlyRootFS *bool
 	Asynchronous   *bool
 }
 
