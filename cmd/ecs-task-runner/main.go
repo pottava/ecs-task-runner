@@ -75,6 +75,8 @@ func main() {
 		Envar("TASKDEF_FAMILY").Default("ecs-task-runner").String()
 	entrypoints := run.Flag("entrypoint", "Override `ENTRYPOINT` of the image.").
 		Envar("ENTRYPOINT").Strings()
+	runconf.User = run.Flag("docker-user", "The user name to use inside the container.").
+		Envar("USER").String()
 	cmds := run.Flag("command", "Override `CMD` of the image.").
 		Envar("COMMAND").Strings()
 	subnets := run.Flag("subnets", "Subnets on where Fargate containers run.").

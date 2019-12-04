@@ -564,7 +564,11 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 				"awslogs-stream-prefix": aws.String(logPrefix),
 			},
 		},
+		Privileged:             aws.Bool(false),
 		ReadonlyRootFilesystem: conf.ReadOnlyRootFS,
+	}
+	if conf.User != nil && len(aws.StringValue(conf.User)) > 0 {
+		containerDef.User = conf.User
 	}
 	if !isEmpty(conf.DockerUser) && dockerCreds != nil {
 		containerDef.RepositoryCredentials = &ecs.RepositoryCredentials{

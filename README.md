@@ -63,8 +63,9 @@ DOCKER_IMAGE              |                 | Docker image to be run on ECS   | 
 FORCE_ECR                 | force-ecr, f    | True: you can use shortened name |         | false
 ENTRYPOINT                | entrypoint      | Override `ENTRYPOINT` of the image |       |
 COMMAND                   | command         | Override `CMD` of the image     |          |
-PORT                      | port            | Publish ports                   |          |
+PORT                      | port, p         | Publish ports                   |          |
 ENVIRONMENT               | environment, e  | Add `ENV` to the container      |          |
+USER                      | docker-user     | The user inside the container   |          |
 LABEL                     | label, l        | Add `LABEL` to the container    |          |
 SUBNETS                   | subnets         | Fargate's Subnets               |          |
 SECURITY_GROUPS           | security-groups | Fargate's SecurityGroups        |          |
@@ -77,6 +78,7 @@ PRIVATE_REGISTRY_USER     | user            | PrivateRegistry Username        | 
 PRIVATE_REGISTRY_PASSWORD | password        | PrivateRegistry Password        |          |
 KMS_CUSTOMKEY_ID          | kms-key-id      | KMS custom key ID for SecretsManager |     |
 ASSIGN_PUBLIC_IP          | assign-pub-ip   | True: Assigns public IP         |          | true
+READONLY_ROOOTFS          | readonly-rootfs | Make the root file system read-only |      | false
 ASYNC                     | async           | True: Does not wait for the job done |     | false
 
 for the `stop` command:

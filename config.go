@@ -29,6 +29,7 @@ type RunConfig struct {
 	Commands       []*string
 	Ports          []*int64
 	Environments   map[string]*string
+	User           *string
 	Labels         map[string]*string
 	Subnets        []*string
 	SecurityGroups []*string
