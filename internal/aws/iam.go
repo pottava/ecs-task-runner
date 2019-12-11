@@ -1,4 +1,4 @@
-package lib
+package aws
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
-	"github.com/pottava/ecs-task-runner/log"
+	"github.com/pottava/ecs-task-runner/internal/log"
 )
 
 // CreatePolicy creates a policy

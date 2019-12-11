@@ -11,7 +11,9 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	commands "github.com/pottava/ecs-task-runner"
-	"github.com/pottava/ecs-task-runner/log"
+	"github.com/pottava/ecs-task-runner/conf"
+	lib "github.com/pottava/ecs-task-runner/internal/aws"
+	"github.com/pottava/ecs-task-runner/internal/log"
 	cli "gopkg.in/alecthomas/kingpin.v2"
 )
 
@@ -39,15 +41,23 @@ func main() {
 		app.Version(ver)
 	}
 	// global flags
-	awsconf := &commands.AwsConfig{}
+	awsconf := &conf.AwsConfig{}
 	awsconf.AccessKey = app.Flag("access-key", "AWS access key ID.").
-		Short('a').Envar("AWS_ACCESS_KEY_ID").Required().String()
+		Short('a').Envar("AWS_ACCESS_KEY_ID").String()
 	awsconf.SecretKey = app.Flag("secret-key", "AWS secret access key.").
-		Short('s').Envar("AWS_SECRET_ACCESS_KEY").Required().String()
+		Short('s').Envar("AWS_SECRET_ACCESS_KEY").String()
+	awsconf.Profile = app.Flag("profile", "AWS default profile.").
+		Envar("AWS_PROFILE").String()
+	awsconf.AssumeRole = app.Flag("assume-role", "IAM Role ARN to be assumed.").
+		Envar("AWS_ASSUME_ROLE").String()
+	awsconf.MfaSerialNumber = app.Flag("mfa-serial-num", "A serial number of MFA device.").
+		Envar("AWS_MFA_SERIAL_NUMBER").String()
+	awsconf.MfaToken = app.Flag("mfa-token", "A token for MFA.").
+		Envar("AWS_MFA_TOKEN").String()
 	awsconf.Region = app.Flag("region", "AWS default region.").
 		Short('r').Envar("AWS_DEFAULT_REGION").Default("us-east-1").String()
 
-	common := &commands.CommonConfig{}
+	common := &conf.CommonConfig{}
 	common.AppVersion = ver
 	if len(commit) > 0 && len(date) > 0 {
 		common.AppVersion = fmt.Sprintf("%s-%s (built at %s)", ver, commit, date)
@@ -63,7 +73,7 @@ func main() {
 	common.IsDebugMode = os.Getenv("APP_DEBUG") == "1"
 
 	// commands
-	runconf := &commands.RunConfig{}
+	runconf := &conf.RunConfig{}
 	runconf.Aws = awsconf
 	runconf.Common = common
 	run := app.Command("run", "Run a docker image as a Fargate container on ECS cluster.")
@@ -110,7 +120,7 @@ func main() {
 	runconf.Asynchronous = run.Flag("async", "If it's True, the app does not wait for the job done.").
 		Envar("ASYNC").Default("false").Bool()
 
-	stopconf := &commands.StopConfig{}
+	stopconf := &conf.StopConfig{}
 	stopconf.Aws = awsconf
 	stopconf.Common = common
 	stop := app.Command("stop", "Stop a Fargate on ECS cluster.")
@@ -184,7 +194,9 @@ func main() {
 		go func() {
 			<-c
 			cancel()
-			commands.DeleteResouces(runconf.Aws, runconf.Common)
+			if sess, err := lib.Session(runconf.Aws, runconf.Common.IsDebugMode); err == nil {
+				commands.DeleteResouces(runconf.Aws, runconf.Common, sess)
+			}
 			os.Exit(1)
 		}()
 

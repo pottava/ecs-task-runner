@@ -10,7 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	cw "github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go/service/ecs"
-	"github.com/pottava/ecs-task-runner/lib"
+	config "github.com/pottava/ecs-task-runner/conf"
+	ec2 "github.com/pottava/ecs-task-runner/internal/aws"
 )
 
 var (
@@ -97,7 +98,7 @@ type OutputContainerExitCodes struct {
 
 var regTaskID = regexp.MustCompile("task/(.*)")
 
-func runResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt time.Time, logsAt *time.Time, logs map[string][]*cw.OutputLogEvent, taskdef *ecs.RegisterTaskDefinitionInput, runconfig *ecs.RunTaskInput, tasks []*ecs.Task) *Output {
+func runResults(ctx context.Context, conf *config.RunConfig, startedAt, runTaskAt time.Time, logsAt *time.Time, logs map[string][]*cw.OutputLogEvent, taskdef *ecs.RegisterTaskDefinitionInput, runconfig *ecs.RunTaskInput, tasks []*ecs.Task) *Output {
 	result := &Output{ExitCode: exitNormally}
 
 	if aws.BoolValue(conf.Asynchronous) { // Async mode
@@ -106,8 +107,13 @@ func runResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt time.
 			asyncTasks := []OutputAsyncTask{}
 			for _, task := range tasks {
 				asyncTasks = append(asyncTasks, OutputAsyncTask{
-					TaskARN:  aws.StringValue(task.TaskArn),
-					PublicIP: lib.RetrievePublicIP(ctx, conf.Aws.AccessKey, conf.Aws.SecretKey, conf.Aws.Region, task, conf.Common.IsDebugMode),
+					TaskARN: aws.StringValue(task.TaskArn),
+					PublicIP: ec2.RetrievePublicIP(
+						ctx,
+						conf.Aws,
+						task,
+						conf.Common.IsDebugMode,
+					),
 				})
 			}
 			result.AsyncTasks = asyncTasks
@@ -155,7 +161,12 @@ func runResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt time.
 				Containers:        containers,
 			}
 			if aws.BoolValue(conf.Common.ExtendedOutput) {
-				resource.PublicIP = lib.RetrievePublicIP(ctx, conf.Aws.AccessKey, conf.Aws.SecretKey, conf.Aws.Region, task, conf.Common.IsDebugMode)
+				resource.PublicIP = ec2.RetrievePublicIP(
+					ctx,
+					conf.Aws,
+					task,
+					conf.Common.IsDebugMode,
+				)
 			}
 			resources = append(resources, resource)
 
@@ -202,7 +213,7 @@ func runResults(ctx context.Context, conf *RunConfig, startedAt, runTaskAt time.
 	return result
 }
 
-func stopResults(ctx context.Context, conf *StopConfig, logs map[string][]*cw.OutputLogEvent, tasks []*ecs.Task) *Output {
+func stopResults(ctx context.Context, conf *config.StopConfig, logs map[string][]*cw.OutputLogEvent, tasks []*ecs.Task) *Output {
 	result := &Output{ExitCode: exitNormally}
 	result.SyncLogs = map[string]interface{}{}
 	seq := 1

@@ -1,4 +1,4 @@
-package lib
+package aws
 
 import (
 	"context"
@@ -7,11 +7,12 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ecs"
-	"github.com/pottava/ecs-task-runner/log"
+	"github.com/pottava/ecs-task-runner/conf"
+	"github.com/pottava/ecs-task-runner/internal/log"
 )
 
 // RetrievePublicIP retrieves public IP address from ENI
-func RetrievePublicIP(ctx context.Context, awsAccessKey, awsSecretKey, awsRegion *string, task *ecs.Task, debug bool) string {
+func RetrievePublicIP(ctx context.Context, cfg *conf.AwsConfig, task *ecs.Task, debug bool) string {
 	if task == nil || len(task.Attachments) == 0 {
 		return ""
 	}
@@ -24,7 +25,7 @@ func RetrievePublicIP(ctx context.Context, awsAccessKey, awsSecretKey, awsRegion
 	if eniID == nil {
 		return ""
 	}
-	sess, err := Session(awsAccessKey, awsSecretKey, awsRegion, nil)
+	sess, err := Session(cfg, debug)
 	if err != nil && debug {
 		log.PrintJSON(err)
 		return ""

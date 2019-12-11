@@ -1,11 +1,15 @@
-package etr
+package conf
 
 // AwsConfig is set of AWS configurations
 type AwsConfig struct {
-	accountID string
-	AccessKey *string
-	SecretKey *string
-	Region    *string
+	AccountID       string
+	Region          *string
+	AccessKey       *string
+	SecretKey       *string
+	Profile         *string
+	AssumeRole      *string
+	MfaSerialNumber *string
+	MfaToken        *string
 }
 
 // CommonConfig is set of common configurations
@@ -37,7 +41,7 @@ type RunConfig struct {
 	Memory         *string
 	TaskRoleArn    *string
 	NumberOfTasks  *int64
-	withParamStore *bool
+	WithParamStore *bool
 	KMSCustomKeyID *string
 	DockerUser     *string
 	DockerPassword *string

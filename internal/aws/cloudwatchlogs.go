@@ -1,4 +1,4 @@
-package lib
+package aws
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	cw "github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go/service/ecs"
-	"github.com/pottava/ecs-task-runner/log"
+	"github.com/pottava/ecs-task-runner/internal/log"
 )
 
 // CreateLogGroup creates a LogGroup

@@ -17,8 +17,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/docker/distribution/reference"
 	"github.com/google/uuid"
-	"github.com/pottava/ecs-task-runner/lib"
-	"github.com/pottava/ecs-task-runner/log"
+	config "github.com/pottava/ecs-task-runner/conf"
+	lib "github.com/pottava/ecs-task-runner/internal/aws"
+	"github.com/pottava/ecs-task-runner/internal/log"
+	"github.com/pottava/ecs-task-runner/internal/util"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -34,14 +36,18 @@ func init() {
 }
 
 // Run runs the docker image on Amazon ECS
-func Run(ctx context.Context, conf *RunConfig) (output *Output, err error) {
+func Run(ctx context.Context, conf *config.RunConfig) (output *Output, err error) {
 	startedAt := time.Now()
 
 	if conf.Common.IsDebugMode {
 		log.PrintJSON(conf)
 	}
 	// Check AWS credentials
-	sess, err := lib.Session(conf.Aws.AccessKey, conf.Aws.SecretKey, conf.Aws.Region, nil)
+	sess, err := lib.Session(conf.Aws, conf.Common.IsDebugMode)
+	if err != nil {
+		return &Output{ExitCode: exitWithError}, err
+	}
+	conf.Aws.AccountID, err = getAccountID(ctx, sess, conf.Common, conf.Aws)
 	if err != nil {
 		return &Output{ExitCode: exitWithError}, err
 	}
@@ -61,20 +67,20 @@ func Run(ctx context.Context, conf *RunConfig) (output *Output, err error) {
 		return &Output{ExitCode: exitWithError}, err
 	}
 	// Check if the environment variables contain sensitive data
-	conf.withParamStore = aws.Bool(containsSensitiveData(ctx, sess, conf))
+	conf.WithParamStore = aws.Bool(containsSensitiveData(ctx, sess, conf))
 
 	// Create AWS resources
 	var taskDefInput *ecs.RegisterTaskDefinitionInput
 	taskDefInput, err = createResouces(ctx, sess, conf, image, startedAt)
 	if err != nil {
-		DeleteResouces(conf.Aws, conf.Common)
+		DeleteResouces(conf.Aws, conf.Common, sess)
 		return &Output{ExitCode: exitWithError}, err
 	}
 	// Run the ECS task
 	runTaskAt := time.Now()
 	tasks, runconfig, err := run(ctx, sess, conf)
 	if err != nil {
-		DeleteResouces(conf.Aws, conf.Common)
+		DeleteResouces(conf.Aws, conf.Common, sess)
 		return &Output{ExitCode: exitWithError}, err
 	}
 	// Asynchronous job
@@ -85,14 +91,14 @@ func Run(ctx context.Context, conf *RunConfig) (output *Output, err error) {
 				!strings.EqualFold(aws.StringValue(task.LastStatus), "PENDING")
 		})
 		if err != nil {
-			DeleteResouces(conf.Aws, conf.Common)
+			DeleteResouces(conf.Aws, conf.Common, sess)
 			return &Output{ExitCode: exitWithError}, err
 		}
 		output = runResults(ctx, conf, startedAt, runTaskAt, nil, nil, taskDefInput, runconfig, tasks)
 		if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
 			output.ExitCode = exitWithError
 		}
-		deleteResoucesImmediately(conf.Aws, conf.Common)
+		deleteResoucesImmediately(conf.Aws, conf.Common, sess)
 		return output, nil
 	}
 	// Wait for its done
@@ -102,7 +108,7 @@ func Run(ctx context.Context, conf *RunConfig) (output *Output, err error) {
 		return task.ExecutionStoppedAt != nil
 	})
 	if err != nil {
-		DeleteResouces(conf.Aws, conf.Common)
+		DeleteResouces(conf.Aws, conf.Common, sess)
 		return &Output{ExitCode: exitWithError}, err
 	}
 	// Retrieve app log
@@ -110,7 +116,7 @@ func Run(ctx context.Context, conf *RunConfig) (output *Output, err error) {
 	retrieveLogsAt := time.Now()
 
 	// Delete AWS resources
-	DeleteResouces(conf.Aws, conf.Common)
+	DeleteResouces(conf.Aws, conf.Common, sess)
 
 	// Format the result
 	output = runResults(ctx, conf, startedAt, runTaskAt, &retrieveLogsAt, logs, taskDefInput, runconfig, tasks)
@@ -135,16 +141,20 @@ func Run(ctx context.Context, conf *RunConfig) (output *Output, err error) {
 }
 
 // Stop stops the Fargate container on Amazon ECS
-func Stop(ctx context.Context, conf *StopConfig) (output *Output, err error) {
+func Stop(ctx context.Context, conf *config.StopConfig) (output *Output, err error) {
 
 	// Check AWS credentials
-	sess, err := lib.Session(conf.Aws.AccessKey, conf.Aws.SecretKey, conf.Aws.Region, nil)
+	sess, err := lib.Session(conf.Aws, conf.Common.IsDebugMode)
+	if err != nil {
+		return &Output{ExitCode: exitWithError}, err
+	}
+	conf.Aws.AccountID, err = getAccountID(ctx, sess, conf.Common, conf.Aws)
 	if err != nil {
 		return &Output{ExitCode: exitWithError}, err
 	}
 	// Ensure parameters
 	requestID = aws.StringValue(conf.RequestID)
-	if isEmpty(conf.Common.EcsCluster) {
+	if util.IsEmpty(conf.Common.EcsCluster) {
 		conf.Common.EcsCluster = conf.RequestID
 	}
 	if conf.Common.IsDebugMode {
@@ -177,7 +187,7 @@ func Stop(ctx context.Context, conf *StopConfig) (output *Output, err error) {
 
 	// Delete AWS resources
 	if len(all.TaskArns) == len(tasks) {
-		deleteResoucesInTheEnd(conf.Aws, conf.Common)
+		deleteResoucesInTheEnd(conf.Aws, conf.Common, sess)
 	}
 	if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
 		return &Output{ExitCode: exitWithError}, nil
@@ -198,11 +208,7 @@ func Stop(ctx context.Context, conf *StopConfig) (output *Output, err error) {
 	return output, nil
 }
 
-func isEmpty(candidate *string) bool {
-	return candidate == nil || aws.StringValue(candidate) == ""
-}
-
-func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Session) (*string, error) {
+func validateImageName(ctx context.Context, conf *config.RunConfig, sess *session.Session) (*string, error) {
 	imageHost, imageName, imageTag, err := parseImageName(conf.Image)
 	if err != nil {
 		log.Errors.Println("Provided image name is invalid.")
@@ -210,15 +216,7 @@ func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Sessi
 	}
 	// Try to make up ECR image name
 	if aws.BoolValue(conf.ForceECR) {
-		account, err := sts.New(sess).GetCallerIdentityWithContext(ctx, nil)
-		if err != nil {
-			return nil, errors.New("Provided AWS credentials are invalid")
-		}
-		if conf.Common.IsDebugMode {
-			log.PrintJSON(account)
-		}
-		accountID := getAccountID(ctx, sess, conf)
-		if !strings.Contains(aws.StringValue(imageHost), accountID) {
+		if !strings.Contains(aws.StringValue(imageHost), conf.Aws.AccountID) {
 			imageName = aws.String(fmt.Sprintf(
 				"%s/%s",
 				aws.StringValue(imageHost),
@@ -226,7 +224,7 @@ func validateImageName(ctx context.Context, conf *RunConfig, sess *session.Sessi
 			))
 			imageHost = aws.String(fmt.Sprintf(
 				"%s.dkr.ecr.%s.amazonaws.com",
-				accountID,
+				conf.Aws.AccountID,
 				aws.StringValue(conf.Aws.Region),
 			))
 		}
@@ -276,13 +274,13 @@ func parseImageName(value string) (*string, *string, *string, error) {
 	return aws.String(imageHost), aws.String(imageName), aws.String(imageTag), nil
 }
 
-func ensureAWSResources(ctx context.Context, sess *session.Session, conf *RunConfig) error {
+func ensureAWSResources(ctx context.Context, sess *session.Session, conf *config.RunConfig) error {
 	eg, _ := errgroup.WithContext(context.Background())
 	vpc := lib.FindDefaultVPC(ctx, sess)
 
 	// Ensure cluster existence
 	eg.Go(func() error {
-		if isEmpty(conf.Common.EcsCluster) {
+		if util.IsEmpty(conf.Common.EcsCluster) {
 			conf.Common.EcsCluster = aws.String(requestID)
 		}
 		return lib.CreateClusterIfNotExist(ctx, sess, conf.Common.EcsCluster)
@@ -330,11 +328,11 @@ func ensureAWSResources(ctx context.Context, sess *session.Session, conf *RunCon
 	return eg.Wait()
 }
 
-func containsSensitiveData(ctx context.Context, sess *session.Session, conf *RunConfig) bool {
+func containsSensitiveData(ctx context.Context, sess *session.Session, conf *config.RunConfig) bool {
 	ssmParameterKey := fmt.Sprintf(
 		"arn:aws:ssm:%s:%s:parameter/",
 		aws.StringValue(conf.Aws.Region),
-		getAccountID(ctx, sess, conf),
+		conf.Aws.AccountID,
 	)
 	for _, val := range conf.Environments {
 		if strings.HasPrefix(aws.StringValue(val), ssmParameterKey) {
@@ -383,7 +381,7 @@ var (
 	credsPolicy *string
 )
 
-func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig, image *string, startedAt time.Time) (taskDefInput *ecs.RegisterTaskDefinitionInput, e error) {
+func createResouces(ctx context.Context, sess *session.Session, conf *config.RunConfig, image *string, startedAt time.Time) (taskDefInput *ecs.RegisterTaskDefinitionInput, e error) {
 	eg, _ := errgroup.WithContext(context.Background())
 
 	eg.Go(func() error {
@@ -391,7 +389,7 @@ func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig,
 		return lib.CreateLogGroup(ctx, sess, logGroup)
 	})
 	eg.Go(func() (err error) {
-		if !isEmpty(conf.DockerUser) {
+		if !util.IsEmpty(conf.DockerUser) {
 			// Store private registry credentials in AWS SecretsManager
 			dockerCreds, err = lib.CreateSecret(
 				ctx, sess,
@@ -423,7 +421,7 @@ func createResouces(ctx context.Context, sess *session.Session, conf *RunConfig,
 	return taskDefInput, nil
 }
 
-func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) (*string, error) {
+func createIAMRole(ctx context.Context, sess *session.Session, conf *config.RunConfig) (*string, error) {
 	roleName := conf.Common.ExecRoleName
 	role, err := iam.New(sess).GetRoleWithContext(ctx, &iam.GetRoleInput{
 		RoleName: roleName,
@@ -449,8 +447,7 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) 
 	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html
 	// Or if you just want to specify sensitive data with AWS Systems Manager Parameter Store
 	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/specifying-sensitive-data.html
-	if (!isEmpty(conf.DockerUser) && dockerCreds != nil) || aws.BoolValue(conf.withParamStore) {
-		accountID := getAccountID(ctx, sess, conf)
+	if (!util.IsEmpty(conf.DockerUser) && dockerCreds != nil) || aws.BoolValue(conf.WithParamStore) {
 		policy, err := lib.CreatePolicy(
 			ctx, sess,
 			fmt.Sprintf("ecs-custom-%s", requestID),
@@ -458,9 +455,9 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) 
 				ecsGetParamsPolicyDocument,
 				getKeyResourceName(ctx, sess, conf),
 				aws.StringValue(conf.Aws.Region),
-				accountID,
+				conf.Aws.AccountID,
 				aws.StringValue(conf.Aws.Region),
-				accountID,
+				conf.Aws.AccountID,
 			))
 		if err != nil {
 			return nil, err
@@ -473,18 +470,21 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *RunConfig) 
 	return execRoleArn, nil
 }
 
-func getAccountID(ctx context.Context, sess *session.Session, conf *RunConfig) string {
-	if conf.Aws.accountID == "" {
-		account, err := sts.New(sess).GetCallerIdentityWithContext(ctx, nil)
-		if err != nil {
-			return ""
-		}
-		conf.Aws.accountID = aws.StringValue(account.Account)
+func getAccountID(ctx context.Context, sess *session.Session, conf *config.CommonConfig, awsdfg *config.AwsConfig) (string, error) {
+	if awsdfg.AccountID != "" {
+		return awsdfg.AccountID, nil
 	}
-	return conf.Aws.accountID
+	account, err := sts.New(sess).GetCallerIdentityWithContext(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	if conf.IsDebugMode {
+		log.PrintJSON(account)
+	}
+	return aws.StringValue(account.Account), nil
 }
 
-func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunConfig) string {
+func getKeyResourceName(ctx context.Context, sess *session.Session, conf *config.RunConfig) string {
 	keyID := aws.StringValue(conf.KMSCustomKeyID)
 	if keyID == "" {
 		return ""
@@ -492,12 +492,11 @@ func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunCon
 	if strings.HasPrefix(keyID, "arn:aws:kms:") {
 		return fmt.Sprintf("\"%s\",", keyID)
 	}
-	accountID := getAccountID(ctx, sess, conf)
 	if _, check := uuid.Parse(keyID); check == nil {
 		return fmt.Sprintf(
 			kmsCustomKeyID,
 			aws.StringValue(conf.Aws.Region),
-			accountID,
+			conf.Aws.AccountID,
 			"key/"+keyID,
 		)
 	}
@@ -506,18 +505,18 @@ func getKeyResourceName(ctx context.Context, sess *session.Session, conf *RunCon
 	// 	return fmt.Sprintf(
 	// 		kmsCustomKeyID,
 	// 		aws.StringValue(conf.Aws.Region),
-	// 		accountID,
+	// 		conf.Aws.AccountID,
 	// 		keyID,
 	// 	)
 	// }
 	return ""
 }
 
-func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig, image, execRoleArn *string, startedAt time.Time) (*string, *ecs.RegisterTaskDefinitionInput, error) {
+func registerTaskDef(ctx context.Context, sess *session.Session, conf *config.RunConfig, image, execRoleArn *string, startedAt time.Time) (*string, *ecs.RegisterTaskDefinitionInput, error) {
 	ssmParameterKey := fmt.Sprintf(
 		"arn:aws:ssm:%s:%s:parameter/",
 		aws.StringValue(conf.Aws.Region),
-		getAccountID(ctx, sess, conf),
+		conf.Aws.AccountID,
 	)
 	environments := []*ecs.KeyValuePair{}
 	secrets := []*ecs.Secret{}
@@ -570,7 +569,7 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 	if conf.User != nil && len(aws.StringValue(conf.User)) > 0 {
 		containerDef.User = conf.User
 	}
-	if !isEmpty(conf.DockerUser) && dockerCreds != nil {
+	if !util.IsEmpty(conf.DockerUser) && dockerCreds != nil {
 		containerDef.RepositoryCredentials = &ecs.RepositoryCredentials{
 			CredentialsParameter: dockerCreds,
 		}
@@ -595,7 +594,7 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *RunConfig
 	return out.TaskDefinition.TaskDefinitionArn, &input, nil
 }
 
-func run(ctx context.Context, sess *session.Session, conf *RunConfig) ([]*ecs.Task, *ecs.RunTaskInput, error) {
+func run(ctx context.Context, sess *session.Session, conf *config.RunConfig) ([]*ecs.Task, *ecs.RunTaskInput, error) {
 	assignPublicIP := "ENABLED"
 	if !aws.BoolValue(conf.AssignPublicIP) {
 		assignPublicIP = "DISABLED"
@@ -641,7 +640,7 @@ func run(ctx context.Context, sess *session.Session, conf *RunConfig) ([]*ecs.Ta
 
 type judgeFunc func(task *ecs.Task) bool
 
-func waitForTask(ctx context.Context, sess *session.Session, conf *CommonConfig, tasks []*ecs.Task, judge judgeFunc) ([]*ecs.Task, error) {
+func waitForTask(ctx context.Context, sess *session.Session, conf *config.CommonConfig, tasks []*ecs.Task, judge judgeFunc) ([]*ecs.Task, error) {
 	timeout := time.After(time.Duration(aws.Int64Value(conf.Timeout)) * time.Minute)
 	taskARNs := []*string{}
 	for _, task := range tasks {
@@ -677,26 +676,22 @@ func waitForTask(ctx context.Context, sess *session.Session, conf *CommonConfig,
 }
 
 // DeleteResouces deletes temporary AWS resources
-func DeleteResouces(aws *AwsConfig, conf *CommonConfig) {
+func DeleteResouces(aws *config.AwsConfig, conf *config.CommonConfig, sess *session.Session) {
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		deleteResoucesImmediately(aws, conf)
+		deleteResoucesImmediately(aws, conf, sess)
 	}()
 	go func() {
 		defer wg.Done()
-		deleteResoucesInTheEnd(aws, conf)
+		deleteResoucesInTheEnd(aws, conf, sess)
 	}()
 	wg.Wait()
 }
 
-func deleteResoucesImmediately(aws *AwsConfig, conf *CommonConfig) {
-	sess, err := lib.Session(aws.AccessKey, aws.SecretKey, aws.Region, nil)
-	if err != nil {
-		return
-	}
+func deleteResoucesImmediately(aws *config.AwsConfig, conf *config.CommonConfig, sess *session.Session) {
 	wg := sync.WaitGroup{}
 	wg.Add(3)
 
@@ -720,11 +715,7 @@ func deleteResoucesImmediately(aws *AwsConfig, conf *CommonConfig) {
 	wg.Wait()
 }
 
-func deleteResoucesInTheEnd(aws *AwsConfig, conf *CommonConfig) {
-	sess, err := lib.Session(aws.AccessKey, aws.SecretKey, aws.Region, nil)
-	if err != nil {
-		return
-	}
+func deleteResoucesInTheEnd(aws *config.AwsConfig, conf *config.CommonConfig, sess *session.Session) {
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 
