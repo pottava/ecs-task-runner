@@ -39,7 +39,7 @@ func CreateClusterIfNotExist(ctx context.Context, sess *session.Session, cluster
 	if err != nil {
 		return false, err
 	}
-	timeout := time.After(time.Duration(15 * time.Second))
+	timeout := time.After(15 * time.Second)
 	for {
 		select {
 		case <-timeout:

@@ -13,7 +13,7 @@ type AwsConfig struct {
 }
 
 // CommonConfig is set of common configurations
-type CommonConfig struct {
+type CommonConfig struct { // nolint
 	AppVersion     string
 	EcsCluster     *string
 	ClusterExisted bool
