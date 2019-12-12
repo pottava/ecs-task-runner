@@ -5,7 +5,8 @@
 [![pottava/ecs-task-runner](http://dockeri.co/image/pottava/ecs-task-runner)](https://hub.docker.com/r/pottava/ecs-task-runner/)
 
 Supported tags and respective `Dockerfile` links:  
-・latest ([versions/2.3/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.3/Dockerfile))  
+・latest ([versions/3.0/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/3.0/Dockerfile))  
+・3.0 ([versions/3.0/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/3.0/Dockerfile))  
 ・2.3 ([versions/2.3/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/2.3/Dockerfile))  
 ・1 ([versions/1.2/Dockerfile](https://github.com/pottava/ecs-task-runner/blob/master/versions/1.2/Dockerfile))  
 
@@ -18,14 +19,14 @@ This is a synchronous task runner for AWS Fargate. It runs a docker container on
 curl (macOS):
 
 ```sh
-$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.3/ecs-task-runner_darwin_amd64 \
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/3.0/ecs-task-runner_darwin_amd64 \
     && chmod +x ecs-task-runner
 ```
 
 curl (Linux):
 
 ```sh
-$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/2.3/ecs-task-runner_linux_amd64 \
+$ curl -Lo ecs-task-runner https://github.com/pottava/ecs-task-runner/releases/download/3.0/ecs-task-runner_linux_amd64 \
     && chmod +x ecs-task-runner
 ```
 
@@ -47,9 +48,13 @@ Common parameters:
 
 Environment Variables     | Argument        | Description                     | Required | Default
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
-AWS_ACCESS_KEY_ID         | access-key, a   | AWS `access key` for API access | *        |
-AWS_SECRET_ACCESS_KEY     | secret-key, s   | AWS `secret key` for API access | *        |
+AWS_ACCESS_KEY_ID         | access-key, a   | AWS `access key` for API access |          |
+AWS_SECRET_ACCESS_KEY     | secret-key, s   | AWS `secret key` for API access |          |
 AWS_DEFAULT_REGION        | region, r       | AWS `region` for API access     |          | us-east-1
+AWS_PROFILE               | profile         | AWS `profile` for API access    |          | default
+AWS_ASSUME_ROLE           | assume-role     | IAM Role ARN to be assumed      |          |
+AWS_MFA_SERIAL_NUMBER     | mfa-serial-num  | A serial number of MFA device   |          |
+AWS_MFA_TOKEN             | mfa-token       | A token for MFA                 |          |
 ECS_CLUSTER               | cluster, c      | Amazon ECS cluster name         |          |
 EXEC_ROLE_NAME            | exec-role-name  | Name of an execution role       |          | ecs-task-runner
 TASK_TIMEOUT              | timeout, t      | Timeout minutes for the task    |          | 30
@@ -104,6 +109,28 @@ $ ecs-task-runner run alpine --entrypoint env
     "2018-09-23T11:42:01+09:00: HOME=/root"
   ]
 }
+```
+
+Using an assume role with MFA token
+
+```console
+$ unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+$
+$ export AWS_PROFILE=project-alpha-dev
+$ export AWS_ASSUME_ROLE=arn:aws:iam::123456789012:role/rolename
+$ export AWS_MFA_SERIAL_NUMBER=arn:aws:iam::123456789012:mfa/mfaname
+$ export AWS_MFA_TOKEN=123456
+$
+$ ecs-task-runner run alpine --entrypoint env
+{
+  "container-1": [
+    "2018-09-23T11:42:01+09:00: PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "2018-09-23T11:42:01+09:00: HOSTNAME=ip-172-31-40-206.us-east-1.compute.internal",
+    "2018-09-23T11:42:01+09:00: AWS_DEFAULT_REGION=ap-northeast-1",
+    "2018-09-23T11:42:01+09:00: AWS_REGION=ap-northeast-1",
+    "2018-09-23T11:42:01+09:00: HOME=/root"
+  ]
+}
 $ echo $?
 0
 ```
@@ -122,7 +149,7 @@ $ echo $?
 Run a container asynchronously with `--async` flag:
 
 ```console
-$ ecs-task-runner run nginx --async -p 80 --security-groups public-80
+$ ecs-task-runner run nginx --async -p 80 --security-groups sg-public-80-abcdefg
 {
   "RequestID": "ecs-task-runner-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "Tasks": [
