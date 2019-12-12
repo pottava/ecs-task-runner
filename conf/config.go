@@ -16,6 +16,7 @@ type AwsConfig struct {
 type CommonConfig struct {
 	AppVersion     string
 	EcsCluster     *string
+	ClusterExisted bool
 	ExecRoleName   *string
 	Timeout        *int64
 	ExtendedOutput *bool
@@ -41,7 +42,7 @@ type RunConfig struct {
 	Memory         *string
 	TaskRoleArn    *string
 	NumberOfTasks  *int64
-	WithParamStore *bool
+	WithParamStore bool
 	KMSCustomKeyID *string
 	DockerUser     *string
 	DockerPassword *string

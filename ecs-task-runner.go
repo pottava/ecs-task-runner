@@ -67,7 +67,7 @@ func Run(ctx context.Context, conf *config.RunConfig) (output *Output, err error
 		return &Output{ExitCode: exitWithError}, err
 	}
 	// Check if the environment variables contain sensitive data
-	conf.WithParamStore = aws.Bool(containsSensitiveData(ctx, sess, conf))
+	conf.WithParamStore = containsSensitiveData(ctx, sess, conf)
 
 	// Create AWS resources
 	var taskDefInput *ecs.RegisterTaskDefinitionInput
@@ -94,6 +94,10 @@ func Run(ctx context.Context, conf *config.RunConfig) (output *Output, err error
 			DeleteResouces(conf.Aws, conf.Common, sess)
 			return &Output{ExitCode: exitWithError}, err
 		}
+		if e := waitUntilTasksStopped(ctx, sess, conf.Common, tasks); e != nil {
+			DeleteResouces(conf.Aws, conf.Common, sess)
+			return &Output{ExitCode: exitWithError}, e
+		}
 		output = runResults(ctx, conf, startedAt, runTaskAt, nil, nil, taskDefInput, runconfig, tasks)
 		if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
 			output.ExitCode = exitWithError
@@ -110,6 +114,10 @@ func Run(ctx context.Context, conf *config.RunConfig) (output *Output, err error
 	if err != nil {
 		DeleteResouces(conf.Aws, conf.Common, sess)
 		return &Output{ExitCode: exitWithError}, err
+	}
+	if e := waitUntilTasksStopped(ctx, sess, conf.Common, tasks); e != nil {
+		DeleteResouces(conf.Aws, conf.Common, sess)
+		return &Output{ExitCode: exitWithError}, e
 	}
 	// Retrieve app log
 	logs := lib.RetrieveLogs(ctx, sess, tasks, requestID, logGroup, logPrefix)
@@ -182,6 +190,9 @@ func Stop(ctx context.Context, conf *config.StopConfig) (output *Output, err err
 	tasks, _ = waitForTask(ctx, sess, conf.Common, tasks, func(task *ecs.Task) bool { // nolint
 		return task.ExecutionStoppedAt != nil
 	})
+	if e := waitUntilTasksStopped(ctx, sess, conf.Common, tasks); e != nil {
+		return &Output{ExitCode: exitWithError}, e
+	}
 	logs := lib.RetrieveLogs(ctx, sess, tasks, requestID, logGroup, logPrefix)
 	output = stopResults(ctx, conf, logs, tasks)
 
@@ -190,7 +201,7 @@ func Stop(ctx context.Context, conf *config.StopConfig) (output *Output, err err
 		deleteResoucesInTheEnd(conf.Aws, conf.Common, sess)
 	}
 	if len(tasks) == 0 || len(tasks[0].Containers) == 0 {
-		return &Output{ExitCode: exitWithError}, nil
+		return &Output{ExitCode: exitNormally}, nil
 	}
 	for _, task := range tasks {
 		for _, container := range task.Containers {
@@ -283,7 +294,9 @@ func ensureAWSResources(ctx context.Context, sess *session.Session, conf *config
 		if util.IsEmpty(conf.Common.EcsCluster) {
 			conf.Common.EcsCluster = aws.String(requestID)
 		}
-		return lib.CreateClusterIfNotExist(ctx, sess, conf.Common.EcsCluster)
+		existed, e := lib.CreateClusterIfNotExist(ctx, sess, conf.Common.EcsCluster, conf.Spot)
+		conf.Common.ClusterExisted = existed
+		return e
 	})
 
 	// Ensure subnets existence
@@ -447,7 +460,7 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *config.RunC
 	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html
 	// Or if you just want to specify sensitive data with AWS Systems Manager Parameter Store
 	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/specifying-sensitive-data.html
-	if (!util.IsEmpty(conf.DockerUser) && dockerCreds != nil) || aws.BoolValue(conf.WithParamStore) {
+	if (!util.IsEmpty(conf.DockerUser) && dockerCreds != nil) || conf.WithParamStore {
 		policy, err := lib.CreatePolicy(
 			ctx, sess,
 			fmt.Sprintf("ecs-custom-%s", requestID),
@@ -675,6 +688,17 @@ func waitForTask(ctx context.Context, sess *session.Session, conf *config.Common
 	}
 }
 
+func waitUntilTasksStopped(ctx context.Context, sess *session.Session, conf *config.CommonConfig, tasks []*ecs.Task) error {
+	taskARNs := []*string{}
+	for _, task := range tasks {
+		taskARNs = append(taskARNs, task.TaskArn)
+	}
+	return ecs.New(sess).WaitUntilTasksStoppedWithContext(ctx, &ecs.DescribeTasksInput{
+		Cluster: conf.EcsCluster,
+		Tasks:   taskARNs,
+	})
+}
+
 // DeleteResouces deletes temporary AWS resources
 func DeleteResouces(aws *config.AwsConfig, conf *config.CommonConfig, sess *session.Session) {
 	wg := sync.WaitGroup{}
@@ -727,7 +751,9 @@ func deleteResoucesInTheEnd(aws *config.AwsConfig, conf *config.CommonConfig, se
 	// Delete the temporary ECS cluster
 	go func() {
 		defer wg.Done()
-		lib.DeleteECSCluster(sess, requestID, conf.IsDebugMode)
+		if !conf.ClusterExisted {
+			lib.DeleteECSCluster(sess, requestID, conf.IsDebugMode)
+		}
 	}()
 	wg.Wait()
 }
