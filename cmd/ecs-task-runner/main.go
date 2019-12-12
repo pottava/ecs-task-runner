@@ -79,6 +79,8 @@ func main() {
 	run := app.Command("run", "Run a docker image as a Fargate container on ECS cluster.")
 	image := run.Arg("image", "Docker image name to be executed on ECS.").
 		Envar("DOCKER_IMAGE").Required().String()
+	runconf.Spot = run.Flag("spot", "If it's True, fargate spot will be used.").
+		Envar("FARGATE_SPOT").Default("false").Bool()
 	runconf.ForceECR = run.Flag("force-ecr", "If it's True, you can use the shortened image name.").
 		Short('f').Envar("FORCE_ECR").Default("false").Bool()
 	runconf.TaskDefFamily = run.Flag("taskdef-family", "ECS Task Definition family name.").

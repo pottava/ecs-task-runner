@@ -60,6 +60,7 @@ for the `run` command:
 Environment Variables     | Argument        | Description                     | Required | Default
 ------------------------- | --------------- | ------------------------------- | -------- | ---------
 DOCKER_IMAGE              |                 | Docker image to be run on ECS   | *        |
+FARGATE_SPOT              | spot            | True: fargate spot will be used |          | false
 FORCE_ECR                 | force-ecr, f    | True: you can use shortened name |         | false
 ENTRYPOINT                | entrypoint      | Override `ENTRYPOINT` of the image |       |
 COMMAND                   | command         | Override `CMD` of the image     |          |

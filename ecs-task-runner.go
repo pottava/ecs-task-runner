@@ -383,10 +383,11 @@ const (
     ]
   }]
 }`
-	fargate   = "FARGATE"
-	logPrefix = "fargate"
-	awsVPC    = "awsvpc"
-	awsCWLogs = "awslogs"
+	fargate     = "FARGATE"
+	fargateSpot = "FARGATE_SPOT"
+	logPrefix   = "fargate"
+	awsVPC      = "awsvpc"
+	awsCWLogs   = "awslogs"
 )
 
 var (
@@ -614,7 +615,6 @@ func run(ctx context.Context, sess *session.Session, conf *config.RunConfig) ([]
 	}
 	input := ecs.RunTaskInput{
 		Cluster:        conf.Common.EcsCluster,
-		LaunchType:     aws.String(fargate),
 		TaskDefinition: taskDefARN,
 		Count:          conf.NumberOfTasks,
 		NetworkConfiguration: &ecs.NetworkConfiguration{
@@ -624,6 +624,17 @@ func run(ctx context.Context, sess *session.Session, conf *config.RunConfig) ([]
 				SecurityGroups: conf.SecurityGroups,
 			},
 		},
+	}
+	if aws.BoolValue(conf.Spot) {
+		input.CapacityProviderStrategy = []*ecs.CapacityProviderStrategyItem{
+			&ecs.CapacityProviderStrategyItem{
+				CapacityProvider: aws.String(fargateSpot),
+				Base:             conf.NumberOfTasks,
+				Weight:           aws.Int64(1),
+			},
+		}
+	} else {
+		input.LaunchType = aws.String(fargate)
 	}
 	if conf.Common.IsDebugMode {
 		log.PrintJSON(input)

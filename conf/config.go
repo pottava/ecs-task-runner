@@ -28,6 +28,7 @@ type RunConfig struct {
 	Aws            *AwsConfig
 	Common         *CommonConfig
 	Image          string
+	Spot           *bool
 	ForceECR       *bool
 	TaskDefFamily  *string
 	Entrypoint     []*string
