@@ -58,7 +58,7 @@ func assume(awsConfig *aws.Config, cfg *conf.AwsConfig, sess *session.Session, r
 	input := &sts.AssumeRoleInput{
 		RoleArn:         roleARN,
 		RoleSessionName: sessionName,
-		DurationSeconds: aws.Int64(600),
+		DurationSeconds: aws.Int64(900),
 	}
 	if !util.IsEmpty(cfg.MfaSerialNumber) && !util.IsEmpty(cfg.MfaToken) {
 		input.SerialNumber = cfg.MfaSerialNumber
