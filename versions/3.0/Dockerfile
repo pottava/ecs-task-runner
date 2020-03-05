@@ -5,7 +5,7 @@ FROM golang:1.13.4-alpine3.10 AS builder
 RUN apk --no-cache add gcc musl-dev git
 RUN go get -u github.com/pottava/ecs-task-runner/...
 WORKDIR /go/src/github.com/pottava/ecs-task-runner
-ENV APP_VERSION=3.0
+ENV APP_VERSION=3.0.1
 RUN git checkout "${APP_VERSION}" > /dev/null 2>&1
 RUN go mod download
 RUN go mod verify
