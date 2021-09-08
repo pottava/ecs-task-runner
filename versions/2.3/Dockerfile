@@ -17,7 +17,7 @@ RUN githash=$(git rev-parse --short HEAD 2>/dev/null) \
     && go build -ldflags "-s -w -X main.date=$(date +%Y-%m-%d --utc) -X main.version=${APP_VERSION} -X main.commit=${githash}"
 RUN mv /go/src/github.com/pottava/ecs-task-runner/cmd/ecs-task-runner/ecs-task-runner /
 
-FROM alpine:3.10
+FROM alpine:3.13.6
 RUN apk add --no-cache ca-certificates
 COPY --from=build-env /ecs-task-runner /ecs-task-runner
 ENTRYPOINT ["/ecs-task-runner", "run"]
