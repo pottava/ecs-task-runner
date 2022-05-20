@@ -469,6 +469,7 @@ func createIAMRole(ctx context.Context, sess *session.Session, conf *config.RunC
 		if err = lib.AttachPolicy(ctx, sess, roleName, credsPolicy); err != nil {
 			return nil, err
 		}
+		time.Sleep(5 * time.Second) // Lag in policy reflection is now observed, wait 5 seconds
 	}
 	return execRoleArn, nil
 }
