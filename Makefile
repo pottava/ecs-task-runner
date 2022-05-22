@@ -11,7 +11,7 @@ run:
 			-e AWS_PROFILE -e AWS_ASSUME_ROLE \
 			-e AWS_DEFAULT_REGION=us-west-2 \
 			-e APP_DEBUG=0 \
-			golang:1.13.4-alpine3.10 \
+			golang:1.17.5-alpine3.15 \
 			go run cmd/ecs-task-runner/main.go \
 			run alpine --entrypoint env --extended-output
 
@@ -24,7 +24,7 @@ start:
 			-e AWS_PROFILE -e AWS_ASSUME_ROLE \
 			-e AWS_DEFAULT_REGION=us-west-2 \
 			-e APP_DEBUG=0 \
-			golang:1.13.4-alpine3.10 \
+			golang:1.17.5-alpine3.15 \
 			go run cmd/ecs-task-runner/main.go \
 			run dockercloud/hello-world \
 			--async -p 80 --security-groups "${SECURITY_GROUP_ID}" --spot
@@ -38,14 +38,14 @@ stop:
 			-e AWS_PROFILE -e AWS_ASSUME_ROLE \
 			-e AWS_DEFAULT_REGION=us-west-2 \
 			-e APP_DEBUG=0 \
-			golang:1.13.4-alpine3.10 \
+			golang:1.17.5-alpine3.15 \
 			go run cmd/ecs-task-runner/main.go \
 			stop "${REQUEST_ID}"
 
 deps:
 	@docker run --rm -it -v "${GOPATH}":/go \
 			-w /go/src/github.com/pottava/ecs-task-runner \
-			golang:1.13.4-alpine3.10 go mod vendor
+			golang:1.17.5-alpine3.15 go mod vendor
 
 test:
 	@docker run --rm -it -v "${GOPATH}":/go \
@@ -54,8 +54,8 @@ test:
 			run --config .golangci.yml
 	@docker run --rm -it -v "${GOPATH}":/go \
 			-w /go/src/github.com/pottava/ecs-task-runner \
-			--entrypoint go golang:1.13.4-alpine3.10 \
-			test -vet off $(go list ./...)
+			--entrypoint go golang:1.17.5-alpine3.15 \
+			test -vet off $(go list ./...) -mod=readonly
 
 build:
 	@docker run --rm -it -v "${GOPATH}":/go \
