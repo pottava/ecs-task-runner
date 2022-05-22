@@ -8,14 +8,11 @@ jobs:
       - checkout
       - run: go mod download
       - run: go mod verify
-      # - run: curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s v1.20.1
       - run:
           name: Run tests
           command: |
-            # Circle CI kills this process because it requires a lot of memory
-            # ./bin/golangci-lint run --config .golangci.yml
-            go test -cover -bench -benchmem $(go list ./...)
-      - run: go run cmd/ecs-task-runner/main.go run alpine --entrypoint env --extended-output
+            go test -cover -bench -benchmem
+      # - run: go run cmd/ecs-task-runner/main.go run alpine --entrypoint env --extended-output
   build:
     working_directory: /go/src/github.com/pottava/ecs-task-runner
     docker:
