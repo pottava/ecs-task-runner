@@ -336,8 +336,13 @@ func containsSensitiveData(ctx context.Context, sess *session.Session, conf *con
 		aws.StringValue(conf.Aws.Region),
 		conf.Aws.AccountID,
 	)
+	secretsManagerKey := fmt.Sprintf(
+		"arn:aws:secretsmanager:%s:%s:secret:",
+		aws.StringValue(conf.Aws.Region),
+		conf.Aws.AccountID,
+	)
 	for _, val := range conf.Environments {
-		if strings.HasPrefix(aws.StringValue(val), ssmParameterKey) {
+		if strings.HasPrefix(aws.StringValue(val), ssmParameterKey) || strings.HasPrefix(aws.StringValue(val), secretsManagerKey) {
 			return true
 		}
 	}
@@ -522,10 +527,15 @@ func registerTaskDef(ctx context.Context, sess *session.Session, conf *config.Ru
 		aws.StringValue(conf.Aws.Region),
 		conf.Aws.AccountID,
 	)
+	secretsManagerKey := fmt.Sprintf(
+		"arn:aws:secretsmanager:%s:%s:secret:",
+		aws.StringValue(conf.Aws.Region),
+		conf.Aws.AccountID,
+	)
 	environments := []*ecs.KeyValuePair{}
 	secrets := []*ecs.Secret{}
 	for key, val := range conf.Environments {
-		if strings.HasPrefix(aws.StringValue(val), ssmParameterKey) {
+		if strings.HasPrefix(aws.StringValue(val), ssmParameterKey) || strings.HasPrefix(aws.StringValue(val), secretsManagerKey) {
 			secrets = append(secrets, &ecs.Secret{
 				Name:      aws.String(key),
 				ValueFrom: val,
